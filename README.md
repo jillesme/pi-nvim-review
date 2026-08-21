@@ -51,10 +51,11 @@ For a published Git repository, replace `dir` with its normal plugin spec and in
    ```
 
 3. Keep that Pi process open. Open Neovim with the same project root as its current working directory.
-4. Run `:Pi` and select `abc13`.
+4. Run `:Pi`, move through the modal session picker, and press `<Enter>` on `abc13`.
 5. Add comments:
-   - normal mode `<leader>pa` comments on the current line;
-   - visual mode `<leader>pa` comments on the selected line range.
+   - normal mode `<leader>pa` opens a multiline comment modal for the current line;
+   - visual mode `<leader>pa` opens it for the selected line range;
+   - press `<C-s>` to save the comment or `<Esc>` to cancel it.
 6. Run `<leader>ps` or `:PiSubmit`.
 
 Pi receives one user message with sorted project-relative paths, current line ranges, source excerpts, and comments. If Pi is idle, processing starts immediately. If Pi is busy, the review is queued as a follow-up and does not interrupt the current task.
@@ -71,6 +72,12 @@ After Pi accepts the message, Neovim removes the submitted signs and comments. T
 | `:PiClear` | Remove all pending comments without submitting them. |
 
 Neovim requires user commands to start with an uppercase letter. This is why the commands use `:Pi` and `:PiSubmit`, not lowercase or hyphenated names.
+
+## Modal controls
+
+`:Pi` opens a centered session picker. Use `j`/`k` or `<C-n>`/`<C-p>` to move, `<Enter>` to select, and `<Esc>` or `q` to cancel.
+
+`:PiAnnotate` opens a bordered multiline editor below the selected or current line when there is enough room. It uses a centered file-window fallback near the bottom of the screen. Press `<C-s>` in normal or insert mode to add the comment. Press `<Esc>`, `<C-c>`, or normal-mode `q` to cancel it.
 
 ## Mappings
 

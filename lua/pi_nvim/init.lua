@@ -1,5 +1,6 @@
 local annotations = require("pi_nvim.annotations")
 local client = require("pi_nvim.client")
+local modal = require("pi_nvim.modal")
 local registry = require("pi_nvim.registry")
 
 local M = {}
@@ -92,9 +93,8 @@ function M.select_session()
     return
   end
 
-  vim.ui.select(sessions, {
-    prompt = "Pi sessions for " .. root,
-    kind = "pi_nvim_session",
+  local _, modal_error = modal.select(sessions, {
+    title = "Pi sessions · " .. vim.fn.fnamemodify(root, ":t"),
     format_item = display_name,
   }, function(choice)
     if not choice then
@@ -117,6 +117,9 @@ function M.select_session()
       notify("active Pi session is " .. display_name(choice))
     end)
   end)
+  if modal_error then
+    notify("could not open session picker: " .. modal_error, vim.log.levels.ERROR)
+  end
 end
 
 function M.annotate(start_line, end_line)
@@ -160,9 +163,11 @@ function M.annotate(start_line, end_line)
 
   local selected_session_id = active_session.sessionId
   local location = start_line == end_line and tostring(start_line) or string.format("%d-%d", start_line, end_line)
-  vim.ui.input({
-    prompt = string.format("Pi comment for %s:%s: ", path, location),
-    scope = "line",
+  local source_window = vim.api.nvim_get_current_win()
+  local _, modal_error = modal.input({
+    title = string.format("Pi comment · %s:%s", path, location),
+    source_window = source_window,
+    target_line = end_line,
   }, function(comment)
     if comment == nil then
       return
@@ -187,6 +192,9 @@ function M.annotate(start_line, end_line)
     end
     notify("comment added at " .. path .. ":" .. location)
   end)
+  if modal_error then
+    notify("could not open comment editor: " .. modal_error, vim.log.levels.ERROR)
+  end
 end
 
 function M.submit()

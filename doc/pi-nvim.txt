@@ -5,9 +5,10 @@ CONTENTS                                                        *pi-nvim*
 
 1. Introduction                                      |pi-nvim-introduction|
 2. Commands                                              |pi-nvim-commands|
-3. Mappings                                              |pi-nvim-mappings|
-4. Configuration                                    |pi-nvim-configuration|
-5. Restrictions                                      |pi-nvim-restrictions|
+3. Modal controls                                  |pi-nvim-modal-controls|
+4. Mappings                                              |pi-nvim-mappings|
+5. Configuration                                    |pi-nvim-configuration|
+6. Restrictions                                      |pi-nvim-restrictions|
 
 ==============================================================================
 1. INTRODUCTION                                      *pi-nvim-introduction*
@@ -47,7 +48,18 @@ Requires Neovim 0.10 or newer.
         Remove all pending comments and their extmarks without sending them.
 
 ==============================================================================
-3. MAPPINGS                                              *pi-nvim-mappings*
+3. MODAL CONTROLS                                  *pi-nvim-modal-controls*
+
+:Pi opens a centered session picker. Use j/k or CTRL-N/CTRL-P to move, <Enter>
+to select, and <Esc> or q to cancel.
+
+:PiAnnotate opens a multiline comment editor below the selected or current
+line when the screen has enough room. Near the bottom of the screen, it uses a
+centered fallback so that the editor remains usable. Use CTRL-S to add the
+comment. Use <Esc>, CTRL-C, or normal-mode q to cancel.
+
+==============================================================================
+4. MAPPINGS                                              *pi-nvim-mappings*
 
 Default mappings are installed only if their left-hand side is not mapped and
 no mapping already targets the matching <Plug> mapping.
@@ -67,7 +79,7 @@ Disable defaults before plugin startup: >lua
     vim.keymap.set("n", "<leader>pr", "<Plug>(PiSubmit)")
 <
 ==============================================================================
-4. CONFIGURATION                                    *pi-nvim-configuration*
+5. CONFIGURATION                                    *pi-nvim-configuration*
 
 Defaults need no setup call. Optional configuration: >lua
 
@@ -86,7 +98,7 @@ registry_dir
             export PI_NVIM_REGISTRY="$HOME/.cache/pi-nvim-sessions"
 <
 ==============================================================================
-5. RESTRICTIONS                                      *pi-nvim-restrictions*
+6. RESTRICTIONS                                      *pi-nvim-restrictions*
 
 - The Pi process that handled /nvim owns the bridge and must stay open. Pi
   exit, session replacement, and /reload close it.

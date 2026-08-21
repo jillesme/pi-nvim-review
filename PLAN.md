@@ -15,7 +15,7 @@ Target workflow: start the bridge in Pi, select it in Neovim, annotate files, su
 - Bind a Node TCP server to an ephemeral `127.0.0.1` port. Publish a versioned manifest in a per-user temporary registry directory (`PI_NVIM_REGISTRY` can override it). The manifest contains the canonical Pi working directory, full and short session IDs, process ID, port, start time, optional session name, and a random access token. Create the directory and file with user-only permissions and replace the manifest atomically.
 - Let `:Pi` scan manifests and show only sessions whose canonical project root equals Neovim's current working directory. Filter dead process IDs, verify the selected session with a `ping`, and remove stale manifests after failed verification.
 - Use newline-delimited JSON for one request per local TCP connection. Validate the protocol version, token, session ID, project root, relative paths, field types, annotation count, and payload size before accepting a submission.
-- Implement the Neovim UI only with built-in APIs: `vim.ui.select` for session selection, `vim.ui.input` for comments, user commands, and extmarks for line/range tracking plus `Pi` sign/virtual text. Require Neovim 0.10 or newer and use `vim.uv` for registry and TCP work.
+- Implement the Neovim UI only with built-in APIs: floating modal windows for session selection and multiline comments, user commands, and extmarks for line/range tracking plus `Pi` sign/virtual text. Require Neovim 0.10 or newer and use `vim.uv` for registry and TCP work.
 - Provide `<Plug>` mappings and install the approved defaults only when their left-hand sides are not already mapped: normal/visual `<leader>pa` for `:PiAnnotate`, and normal `<leader>ps` for `:PiSubmit`. Allow users to disable or replace defaults.
 - Keep annotations in Neovim memory for the MVP. Bind each batch to its selected live session, reject files outside that session's root, resolve current extmark positions at submit time, and include current source lines (including unsaved buffer text) in a deterministic project-relative payload. While a batch is pending, block `:Pi` from changing sessions until the user submits it or runs `:PiClear`; document this MVP restriction.
 - Format one readable user prompt that asks Pi to apply all review comments, with each filename, current line range, numbered source excerpt, and comment. Send immediately when Pi is idle. If Pi is busy, send it with `deliverAs: "followUp"` so it is queued without interrupting the current task.
@@ -35,6 +35,7 @@ The repository is empty. Use one repository root that is both an installable Pi 
 - `lua/pi_nvim/init.lua` — public Neovim actions and active-session state
 - `lua/pi_nvim/registry.lua` — project-scoped manifest discovery and stale-entry handling
 - `lua/pi_nvim/client.lua` — asynchronous `vim.uv` TCP client, JSON framing, timeout, and cleanup
+- `lua/pi_nvim/modal.lua` — centered session picker and multiline comment editor positioned below the annotated line with a centered fallback
 - `lua/pi_nvim/annotations.lua` — in-memory line/range records, extmarks, source extraction, and clear behavior
 - `doc/pi-nvim.txt` and generated `doc/tags` — concise `:help pi-nvim` commands, mappings, configuration, and limitations
 - `README.md` — Pi and Neovim installation, complete workflow, configuration, protocol limitations, and future detached-session note
@@ -45,7 +46,7 @@ The repository is empty. Use one repository root that is both an installable Pi 
 - Pi package discovery through the `package.json#pi.extensions` manifest and `@earendil-works/pi-coding-agent` as a `"*"` peer dependency (`docs/packages.md`).
 - Node built-ins `node:net`, `node:crypto`, `node:fs/promises`, `node:os`, and `node:path`; no custom networking or filesystem dependency.
 - Neovim's documented plugin conventions: a small guarded `plugin/` entry point, deferred Lua module loading, `<Plug>` mappings, and conflict-aware defaults (`lua-plugin.txt`).
-- Neovim built-ins `vim.ui.select`, `vim.ui.input`, `vim.api.nvim_create_user_command`, `vim.api.nvim_buf_set_extmark`/`nvim_buf_get_extmark_by_id`, `vim.json`, and `vim.uv` TCP/filesystem/timer APIs.
+- Neovim built-ins `vim.api.nvim_open_win`, `vim.api.nvim_create_user_command`, `vim.api.nvim_buf_set_extmark`/`nvim_buf_get_extmark_by_id`, `vim.json`, and `vim.uv` TCP/filesystem/timer APIs.
 - No existing project code is available; the directory is empty.
 
 ## Steps
@@ -58,7 +59,7 @@ The repository is empty. Use one repository root that is both an installable Pi 
 - [x] Refresh optional session-name metadata after `session_info_changed`; close sockets/status and delete the manifest idempotently on every `session_shutdown` reason.
 - [x] Register `:Pi`, `:PiAnnotate`, `:PiSubmit`, and `:PiClear`, plus `<Plug>` targets and conflict-aware `<leader>pa`/`<leader>ps` defaults in the lazy Neovim entry point.
 - [x] Discover only manifests for canonical `getcwd()`, filter dead PIDs, verify the selected item with `ping`, and record it as the active session; block session changes while annotations are pending with guidance to submit or clear first.
-- [x] Add normal-line and visual-line-range comments through `vim.ui.input`; disallow unnamed/special/out-of-root buffers; track ranges with extmarks and show a plain `Pi` sign plus concise virtual text.
+- [x] Add normal-line and visual-line-range comments through a multiline floating modal; disallow unnamed/special/out-of-root buffers; track ranges with extmarks and show a plain `Pi` sign plus concise virtual text.
 - [x] Resolve current extmark ranges and source lines at submit time, sort by relative path/range/insertion order, send asynchronously with a timeout, and keep annotations on every failure.
 - [x] On acceptance, clear all submitted extmarks/records, report whether Pi accepted or queued the prompt, and permit the next annotation/submission cycle against the same active session.
 - [x] Document installation through `pi install`/`pi -e` and a Neovim plugin manager, all commands/mappings/configuration, in-memory-only comments, same-root matching, blocked session changes with pending comments, Pi-process lifetime, busy follow-up delivery, and stale-session recovery in README and vimdoc.
