@@ -1,0 +1,102 @@
+*pi-nvim.txt*                Neovim comments for a live Pi session
+
+==============================================================================
+CONTENTS                                                        *pi-nvim*
+
+1. Introduction                                      |pi-nvim-introduction|
+2. Commands                                              |pi-nvim-commands|
+3. Mappings                                              |pi-nvim-mappings|
+4. Configuration                                    |pi-nvim-configuration|
+5. Restrictions                                      |pi-nvim-restrictions|
+
+==============================================================================
+1. INTRODUCTION                                      *pi-nvim-introduction*
+
+nvim-pi-comment sends line-based code review comments from Neovim to a live
+Pi session.
+
+In Pi, start the bridge from the project root: >
+
+    /nvim
+<
+Keep that Pi process open. In Neovim, use |:Pi| from the same canonical current
+working directory. Add comments with <leader>pa and send them with <leader>ps.
+Pi receives one user message and starts work immediately. If Pi is busy, the
+message is queued as a follow-up without interrupting current work.
+
+Requires Neovim 0.10 or newer.
+
+==============================================================================
+2. COMMANDS                                              *pi-nvim-commands*
+
+:Pi                                                             *:Pi*
+        Select a live Pi bridge whose canonical project root equals
+        Neovim's current working directory.
+
+:[range]PiAnnotate                                      *:PiAnnotate*
+        Ask for a review comment and attach it to the current line or supplied
+        line range. Only named, existing files inside the active project are
+        accepted.
+
+:PiSubmit                                                   *:PiSubmit*
+        Send all pending comments to the active Pi session. Comments remain
+        visible after any failure. A successful acknowledgement clears only
+        the submitted comments.
+
+:PiClear                                                     *:PiClear*
+        Remove all pending comments and their extmarks without sending them.
+
+==============================================================================
+3. MAPPINGS                                              *pi-nvim-mappings*
+
+Default mappings are installed only if their left-hand side is not mapped and
+no mapping already targets the matching <Plug> mapping.
+
+Normal and Visual <leader>pa
+        <Plug>(PiAnnotate)
+        Annotate the current line or selected line range.
+
+Normal <leader>ps
+        <Plug>(PiSubmit)
+        Submit all pending comments.
+
+Disable defaults before plugin startup: >lua
+
+    vim.g.pi_nvim_disable_default_mappings = true
+    vim.keymap.set({ "n", "x" }, "<leader>pc", "<Plug>(PiAnnotate)")
+    vim.keymap.set("n", "<leader>pr", "<Plug>(PiSubmit)")
+<
+==============================================================================
+4. CONFIGURATION                                    *pi-nvim-configuration*
+
+Defaults need no setup call. Optional configuration: >lua
+
+    require("pi_nvim").setup({
+      timeout_ms = 3000,
+      registry_dir = nil,
+    })
+<
+timeout_ms
+        Timeout in milliseconds for ping and submit requests.
+
+registry_dir
+        Directory that contains live bridge manifests. Pi must use the same
+        directory. Prefer setting $PI_NVIM_REGISTRY for both processes: >sh
+
+            export PI_NVIM_REGISTRY="$HOME/.cache/pi-nvim-sessions"
+<
+==============================================================================
+5. RESTRICTIONS                                      *pi-nvim-restrictions*
+
+- The Pi process that handled /nvim owns the bridge and must stay open. Pi
+  exit, session replacement, and /reload close it.
+- Pending comments are held only in Neovim memory.
+- :Pi uses exact canonical current-directory matching, not Git root detection.
+- Pending comments prevent :Pi from changing sessions. Use :PiSubmit or
+  :PiClear first. This is an MVP safety restriction.
+- A comment can cover at most 1000 lines. Requests and fields have bounded
+  sizes.
+- Unsaved source text can be sent in excerpts. Save edits before Pi changes the
+  same files to avoid editor/disk conflicts.
+
+vim:tw=78:ts=8:noet:ft=help:norl:

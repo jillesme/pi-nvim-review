@@ -1,0 +1,11 @@
+:Pi	pi-nvim.txt	/*:Pi*
+:PiAnnotate	pi-nvim.txt	/*:PiAnnotate*
+:PiClear	pi-nvim.txt	/*:PiClear*
+:PiSubmit	pi-nvim.txt	/*:PiSubmit*
+pi-nvim	pi-nvim.txt	/*pi-nvim*
+pi-nvim-commands	pi-nvim.txt	/*pi-nvim-commands*
+pi-nvim-configuration	pi-nvim.txt	/*pi-nvim-configuration*
+pi-nvim-introduction	pi-nvim.txt	/*pi-nvim-introduction*
+pi-nvim-mappings	pi-nvim.txt	/*pi-nvim-mappings*
+pi-nvim-restrictions	pi-nvim.txt	/*pi-nvim-restrictions*
+pi-nvim.txt	pi-nvim.txt	/*pi-nvim.txt*

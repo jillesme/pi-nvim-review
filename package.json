@@ -1,0 +1,28 @@
+{
+  "name": "nvim-pi-comment",
+  "version": "0.1.0",
+  "description": "Send line-based Neovim review comments to a live Pi session",
+  "keywords": [
+    "pi-package",
+    "neovim",
+    "code-review"
+  ],
+  "files": [
+    "extensions",
+    "lua",
+    "plugin",
+    "doc",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/nvim-review/index.ts"
+    ]
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
