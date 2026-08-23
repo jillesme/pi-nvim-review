@@ -1,5 +1,7 @@
 # pi-nvim-review
 
+![Pi and Neovim review workflow](doc/screenshot.webp)
+
 `pi-nvim-review` connects Neovim to a live [Pi](https://pi.dev) session. Mark lines in Neovim, write review comments, and submit the full review to Pi as one user message.
 
 The repository is both:
