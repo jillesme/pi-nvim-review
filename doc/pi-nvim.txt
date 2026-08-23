@@ -8,7 +8,8 @@ CONTENTS                                                        *pi-nvim*
 3. Modal controls                                  |pi-nvim-modal-controls|
 4. Mappings                                              |pi-nvim-mappings|
 5. Configuration                                    |pi-nvim-configuration|
-6. Restrictions                                      |pi-nvim-restrictions|
+6. Review prompt                                      |pi-nvim-review-prompt|
+7. Restrictions                                      |pi-nvim-restrictions|
 
 ==============================================================================
 1. INTRODUCTION                                      *pi-nvim-introduction*
@@ -98,7 +99,24 @@ registry_dir
             export PI_NVIM_REGISTRY="$HOME/.cache/pi-nvim-sessions"
 <
 ==============================================================================
-6. RESTRICTIONS                                      *pi-nvim-restrictions*
+6. REVIEW PROMPT                                    *pi-nvim-review-prompt*
+
+By default, Pi implements change requests and answers questions without
+editing files for those questions. Mixed comments are handled one part at a
+time. Ambiguous comments cause a clarification request instead of a
+speculative change. Intent is classified by meaning, not punctuation.
+
+To replace these instructions for one project, create this file relative to
+the project root: >
+
+    .pi/nvim-review-prompt.md
+<
+The bridge reads it for each submission. The file contents replace the default
+opening instructions. Paths, line ranges, comments, and source excerpts are
+always appended. An empty file omits the opening instructions.
+
+==============================================================================
+7. RESTRICTIONS                                      *pi-nvim-restrictions*
 
 - The Pi process that handled /nvim owns the bridge and must stay open. Pi
   exit, session replacement, and /reload close it.

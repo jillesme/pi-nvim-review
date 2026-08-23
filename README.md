@@ -95,12 +95,22 @@ After Pi accepts the message, Neovim removes the submitted signs and comments. T
 
 ## Review prompt
 
+By default, the bridge treats each comment according to its requested outcome: it implements change requests, answers questions without editing files, handles mixed comments one part at a time, and asks for clarification when the intent is ambiguous. Classification uses meaning rather than punctuation, so `Can you rename this?` is a change request while `Can you explain this?` is a question.
+
 To replace the default review instructions for one project, create `.pi/nvim-review-prompt.md` in the project root. For example:
 
 ```md
-Apply the review comments below. Preserve backward compatibility.
-Run the relevant checks after making changes.
-Report each change and any comment that you could not apply.
+Process each review comment independently according to its requested outcome.
+
+- If a comment asks for an explanation or information, answer it directly. Do not modify files for that comment.
+- If a comment requests a code change, implement it.
+- If a comment contains both a question and a change request, answer the question and implement only the explicit change.
+- If the intent is ambiguous, explain the ambiguity and ask for clarification instead of making a speculative change.
+- Classify by meaning, not grammar or punctuation.
+
+Inspect the current files before answering or editing.
+
+In the final response, use separate sections for changes made, questions answered, and comments that need clarification.
 ```
 
 The bridge reads this file for each submission. Its contents replace the standard opening instructions. The project root and the structured review comments, including file paths, line ranges, comments, and source excerpts, are always appended. An empty file omits the opening instructions. If the file does not exist, the bridge uses the default instructions.
