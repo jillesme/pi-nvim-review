@@ -15,48 +15,19 @@ The repository is both:
 
 ## Installation
 
-Install both parts from the same checkout or Git source: the extension in Pi and the plugin in Neovim.
+Install the GitHub repository in both Pi and Neovim.
 
-### Local checkout
-
-Clone or download the repository, then install its Pi package:
-
-```sh
-cd /absolute/path/to/pi-nvim-review
-pi install "$PWD"
-```
-
-Add the checkout to Neovim. With lazy.nvim:
-
-```lua
-{
-  dir = "/absolute/path/to/pi-nvim-review",
-}
-```
-
-Without a plugin manager, link the checkout into Neovim's native package directory:
-
-```sh
-mkdir -p ~/.local/share/nvim/site/pack/pi/start
-ln -s /absolute/path/to/pi-nvim-review \
-  ~/.local/share/nvim/site/pack/pi/start/pi-nvim-review
-```
-
-Restart Pi and Neovim after installation. Run `/nvim` in Pi to confirm that the extension loaded. In Neovim, run `:help pi-nvim` to confirm that the plugin loaded.
-
-For a one-time Pi run during development, load the extension directly instead of installing it:
-
-```sh
-pi -e /absolute/path/to/pi-nvim-review/extensions/nvim-review/index.ts
-```
-
-### Git source
-
-Install the public Git repository in Pi and Neovim:
+### Pi
 
 ```sh
 pi install git:github.com/jillesme/pi-nvim-review
 ```
+
+Pi packages run with full system access. Review the source before you install a third-party package.
+
+### Neovim
+
+With lazy.nvim:
 
 ```lua
 {
@@ -64,26 +35,38 @@ pi install git:github.com/jillesme/pi-nvim-review
 }
 ```
 
-Pi packages run with full system access. Review the source before you install a third-party package.
+Use `jillesme/pi-nvim-review` as the source with other Neovim plugin managers. Restart Pi and Neovim after installation. Run `/nvim` in Pi and `:help pi-nvim` in Neovim to confirm that both parts loaded.
 
-## Code tours
+### Local development
 
-The `.tours` directory contains guided walkthroughs of the transport path and protocol data structures. They are optional and are not required to use the plugin.
-
-To view them in the terminal, install [Tourminal](https://github.com/jillesme/tourminal):
+To use a local checkout instead, install its Pi package and point Neovim at the same directory:
 
 ```sh
-brew install jillesme/tap/tourminal
+pi install /absolute/path/to/pi-nvim-review
 ```
 
-From the repository root, run `tour` to select a walkthrough, or open one directly:
+```lua
+{
+  dir = "/absolute/path/to/pi-nvim-review",
+}
+```
+
+For a one-time Pi run, load the extension directly:
 
 ```sh
-tour --tour .tours/neovim-to-pi-transport.tour
-tour --tour .tours/review-data-structures.tour
+pi -e /absolute/path/to/pi-nvim-review/extensions/nvim-review/index.ts
 ```
 
-The files also work with the Microsoft CodeTour extension for VS Code.
+## Commands
+
+| Command | Action |
+| --- | --- |
+| `:Pi` | List live sessions for Neovim's canonical current working directory and select one. |
+| `:[range]PiAnnotate` | Add a comment to the current line or supplied line range. |
+| `:PiSubmit` | Submit all pending comments to the active session. |
+| `:PiClear` | Remove all pending comments without submitting them. |
+
+Neovim requires user commands to start with an uppercase letter. This is why the commands use `:Pi` and `:PiSubmit`, not lowercase or hyphenated names.
 
 ## Workflow
 
@@ -108,16 +91,19 @@ Pi receives one user message with sorted project-relative paths, current line ra
 
 After Pi accepts the message, Neovim removes the submitted signs and comments. The selected session stays active, so you can start another review cycle.
 
-## Commands
+## Review prompt
 
-| Command | Action |
-| --- | --- |
-| `:Pi` | List live sessions for Neovim's canonical current working directory and select one. |
-| `:[range]PiAnnotate` | Add a comment to the current line or supplied line range. |
-| `:PiSubmit` | Submit all pending comments to the active session. |
-| `:PiClear` | Remove all pending comments without submitting them. |
+To replace the default review instructions for one project, create `.pi/nvim-review-prompt.md` in the project root. For example:
 
-Neovim requires user commands to start with an uppercase letter. This is why the commands use `:Pi` and `:PiSubmit`, not lowercase or hyphenated names.
+```md
+Apply the review comments below. Preserve backward compatibility.
+Run the relevant checks after making changes.
+Report each change and any comment that you could not apply.
+```
+
+The bridge reads this file for each submission. Its contents replace the standard opening instructions. The project root and the structured review comments, including file paths, line ranges, comments, and source excerpts, are always appended. An empty file omits the opening instructions. If the file does not exist, the bridge uses the default instructions.
+
+If the file exists but cannot be read, submission fails and Neovim keeps the pending comments so that you can fix the file and retry.
 
 ## Modal controls
 
@@ -181,20 +167,6 @@ export PI_NVIM_REGISTRY="$HOME/.cache/pi-nvim-sessions"
 ```
 
 By default, both plugins use a user-specific directory below the operating system temporary directory.
-
-### Review prompt
-
-To replace the default review instructions for one project, create `.pi/nvim-review-prompt.md` in the project root. For example:
-
-```md
-Apply the review comments below. Preserve backward compatibility.
-Run the relevant checks after making changes.
-Report each change and any comment that you could not apply.
-```
-
-The bridge reads this file for each submission. Its contents replace the standard opening instructions. The project root and the structured review comments, including file paths, line ranges, comments, and source excerpts, are always appended. An empty file omits the opening instructions. If the file does not exist, the bridge uses the default instructions.
-
-If the file exists but cannot be read, submission fails and Neovim keeps the pending comments so that you can fix the file and retry.
 
 ## MVP restrictions
 
