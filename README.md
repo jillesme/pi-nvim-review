@@ -136,6 +136,20 @@ export PI_NVIM_REGISTRY="$HOME/.cache/pi-nvim-sessions"
 
 By default, both plugins use a user-specific directory below the operating system temporary directory.
 
+### Review prompt
+
+To replace the default review instructions for one project, create `.pi/nvim-review-prompt.md` in the project root. For example:
+
+```md
+Apply the review comments below. Preserve backward compatibility.
+Run the relevant checks after making changes.
+Report each change and any comment that you could not apply.
+```
+
+The bridge reads this file for each submission. Its contents replace the standard opening instructions. The project root and the structured review comments, including file paths, line ranges, comments, and source excerpts, are always appended. An empty file omits the opening instructions. If the file does not exist, the bridge uses the default instructions.
+
+If the file exists but cannot be read, submission fails and Neovim keeps the pending comments so that you can fix the file and retry.
+
 ## MVP restrictions
 
 - **The Pi process must stay open.** The bridge belongs to the Pi process that handled `/nvim`. Pi exit, session replacement, or `/reload` closes it. A future version can move ownership to a detached Pi RPC process.

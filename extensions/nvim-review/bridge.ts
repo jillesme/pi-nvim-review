@@ -1,5 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
+import { join } from "node:path";
 
 import {
   LOOPBACK_HOST,
@@ -15,6 +17,12 @@ import {
 import { removeManifest, writeManifest } from "./registry";
 
 const CONNECTION_TIMEOUT_MS = 5000;
+const REVIEW_PROMPT_PATH = ".pi/nvim-review-prompt.md";
+const DEFAULT_REVIEW_INSTRUCTIONS = [
+  "Apply all code review comments below to the project.",
+  "Inspect the current files before editing. The excerpts show what Neovim displayed when the review was submitted and can include unsaved buffer text.",
+  "After you make the changes, briefly summarize what you changed and identify any comment that you could not apply.",
+].join("\n");
 
 export interface ReviewBridgeOptions {
   sessionId: string;
@@ -38,15 +46,28 @@ function formatLocation(annotation: ReviewAnnotation): string {
     : `${annotation.startLine}-${annotation.endLine}`;
 }
 
-function formatReviewPrompt(projectRoot: string, annotations: ReviewAnnotation[]): string {
-  const lines = [
-    "Apply all code review comments below to the project.",
-    "Inspect the current files before editing. The excerpts show what Neovim displayed when the review was submitted and can include unsaved buffer text.",
-    "After you make the changes, briefly summarize what you changed and identify any comment that you could not apply.",
-    "",
-    `Project root: ${JSON.stringify(projectRoot)}`,
-    "",
-  ];
+async function readReviewInstructions(projectRoot: string): Promise<string> {
+  const promptPath = join(projectRoot, REVIEW_PROMPT_PATH);
+
+  try {
+    return (await readFile(promptPath, "utf8")).trim();
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return DEFAULT_REVIEW_INSTRUCTIONS;
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Could not read ${REVIEW_PROMPT_PATH}: ${message}`);
+  }
+}
+
+function formatReviewPrompt(
+  projectRoot: string,
+  annotations: ReviewAnnotation[],
+  instructions: string,
+): string {
+  const lines = instructions === "" ? [] : [instructions, ""];
+  lines.push(`Project root: ${JSON.stringify(projectRoot)}`, "");
 
   annotations.forEach((annotation, index) => {
     const width = String(annotation.endLine).length;
@@ -251,7 +272,8 @@ export class ReviewBridge {
     }
 
     try {
-      const prompt = formatReviewPrompt(this.options.projectRoot, request.annotations);
+      const instructions = await readReviewInstructions(this.options.projectRoot);
+      const prompt = formatReviewPrompt(this.options.projectRoot, request.annotations, instructions);
       const status = await this.options.onSubmit(prompt, request.annotations.length);
       return {
         protocolVersion: PROTOCOL_VERSION,
