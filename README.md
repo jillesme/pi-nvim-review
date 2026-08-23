@@ -1,6 +1,6 @@
-# nvim-pi-comment
+# pi-nvim-review
 
-`nvim-pi-comment` connects Neovim to a live [Pi](https://pi.dev) session. Mark lines in Neovim, write review comments, and submit the full review to Pi as one user message.
+`pi-nvim-review` connects Neovim to a live [Pi](https://pi.dev) session. Mark lines in Neovim, write review comments, and submit the full review to Pi as one user message.
 
 The repository is both:
 
@@ -15,29 +15,75 @@ The repository is both:
 
 ## Installation
 
+Install both parts from the same checkout or Git source: the extension in Pi and the plugin in Neovim.
+
 ### Local checkout
 
-Install the Pi package from this checkout:
+Clone or download the repository, then install its Pi package:
 
 ```sh
-pi install /absolute/path/to/nvim-pi-comment
+cd /absolute/path/to/pi-nvim-review
+pi install "$PWD"
 ```
 
-For a one-time Pi run during development:
-
-```sh
-pi -e /absolute/path/to/nvim-pi-comment/extensions/nvim-review/index.ts
-```
-
-Add the same checkout to Neovim. With lazy.nvim:
+Add the checkout to Neovim. With lazy.nvim:
 
 ```lua
 {
-  dir = "/absolute/path/to/nvim-pi-comment",
+  dir = "/absolute/path/to/pi-nvim-review",
 }
 ```
 
-For a published Git repository, replace `dir` with its normal plugin spec and install that same Git source with `pi install`.
+Without a plugin manager, link the checkout into Neovim's native package directory:
+
+```sh
+mkdir -p ~/.local/share/nvim/site/pack/pi/start
+ln -s /absolute/path/to/pi-nvim-review \
+  ~/.local/share/nvim/site/pack/pi/start/pi-nvim-review
+```
+
+Restart Pi and Neovim after installation. Run `/nvim` in Pi to confirm that the extension loaded. In Neovim, run `:help pi-nvim` to confirm that the plugin loaded.
+
+For a one-time Pi run during development, load the extension directly instead of installing it:
+
+```sh
+pi -e /absolute/path/to/pi-nvim-review/extensions/nvim-review/index.ts
+```
+
+### Git source
+
+Install the public Git repository in Pi and Neovim:
+
+```sh
+pi install git:github.com/jillesme/pi-nvim-review
+```
+
+```lua
+{
+  "jillesme/pi-nvim-review",
+}
+```
+
+Pi packages run with full system access. Review the source before you install a third-party package.
+
+## Code tours
+
+The `.tours` directory contains guided walkthroughs of the transport path and protocol data structures. They are optional and are not required to use the plugin.
+
+To view them in the terminal, install [Tourminal](https://github.com/jillesme/tourminal):
+
+```sh
+brew install jillesme/tap/tourminal
+```
+
+From the repository root, run `tour` to select a walkthrough, or open one directly:
+
+```sh
+tour --tour .tours/neovim-to-pi-transport.tour
+tour --tour .tours/review-data-structures.tour
+```
+
+The files also work with the Microsoft CodeTour extension for VS Code.
 
 ## Workflow
 
@@ -107,7 +153,7 @@ With lazy.nvim, put the global option in `init`:
 
 ```lua
 {
-  dir = "/absolute/path/to/nvim-pi-comment",
+  dir = "/absolute/path/to/pi-nvim-review",
   init = function()
     vim.g.pi_nvim_disable_default_mappings = true
   end,

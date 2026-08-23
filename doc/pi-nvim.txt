@@ -13,8 +13,8 @@ CONTENTS                                                        *pi-nvim*
 ==============================================================================
 1. INTRODUCTION                                      *pi-nvim-introduction*
 
-nvim-pi-comment sends line-based code review comments from Neovim to a live
-Pi session.
+pi-nvim-review sends line-based code review comments from Neovim to a live Pi
+session.
 
 In Pi, start the bridge from the project root: >
 

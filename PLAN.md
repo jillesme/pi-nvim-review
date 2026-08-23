@@ -26,7 +26,7 @@ Target workflow: start the bridge in Pi, select it in Neovim, annotate files, su
 
 The repository is empty. Use one repository root that is both an installable Pi package and a standard Neovim runtime, so the same Git source can be installed by Pi and a Neovim plugin manager.
 
-- `package.json` — `nvim-pi-comment` metadata, `pi-package` keyword, Pi extension manifest, package file list, and Pi peer dependency; no third-party runtime dependency
+- `package.json` — `pi-nvim-review` metadata, `pi-package` keyword, Pi extension manifest, package file list, and Pi peer dependency; no third-party runtime dependency
 - `extensions/nvim-review/index.ts` — Pi extension entry point, `/nvim` command, session events, and footer status
 - `extensions/nvim-review/bridge.ts` — loopback server, request framing/validation, prompt delivery, responses, and cleanup
 - `extensions/nvim-review/registry.ts` — shared registry path rules and atomic manifest lifecycle

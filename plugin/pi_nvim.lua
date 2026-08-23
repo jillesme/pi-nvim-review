@@ -1,7 +1,7 @@
-if vim.g.loaded_nvim_pi_comment then
+if vim.g.loaded_pi_nvim_review then
   return
 end
-vim.g.loaded_nvim_pi_comment = true
+vim.g.loaded_pi_nvim_review = true
 
 local function create_command(name, callback, opts)
   if vim.fn.exists(":" .. name) ~= 0 then

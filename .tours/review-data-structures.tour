@@ -1,0 +1,50 @@
+{
+  "$schema": "https://aka.ms/codetour-schema",
+  "title": "Review data structures and trust boundaries",
+  "description": "Understand the shared Pi/Neovim data model, its validation boundaries, and the state transitions that keep review comments safe.",
+  "steps": [
+    {
+      "description": "### Orientation\n\nThis tour treats the integration as a set of shared contracts, not as a transport timeline. It starts with the discovery manifest, then follows pending annotations into the versioned request and response model. The main invariant is ownership: filesystem data and network JSON stay untrusted until validated, while Neovim keeps pending comments until Pi returns a matching acknowledgement."
+    },
+    {
+      "file": "extensions/nvim-review/protocol.ts",
+      "pattern": "^export interface BridgeManifest \\{$",
+      "description": "### The discovery manifest is capability metadata\n\n`BridgeManifest` is the shared registry schema. The protocol version gates compatibility; `sessionId` and canonical `projectRoot` bind identity and scope; the literal loopback host and ephemeral port locate the bridge; and `token` is the bearer capability. `shortId` and optional `sessionName` are display metadata, not authentication. The owning Pi process supplies its PID and start time so Neovim can rank sessions and reject dead ones."
+    },
+    {
+      "file": "extensions/nvim-review/registry.ts",
+      "pattern": "^export async function writeManifest\\(manifest: BridgeManifest\\): Promise<string> \\{$",
+      "description": "### Pi owns manifest publication and removal\n\nThe TypeScript side mirrors Neovim's registry location rule: `PI_NVIM_REGISTRY`, or a user-specific temporary directory. It requires a real, non-symlink directory, applies `0700`/`0600` permissions, hashes the session ID for the filename, and atomically renames a fresh temporary file into place. Session-name updates republish the same manifest. On shutdown, [`removeManifest`](./extensions/nvim-review/registry.ts) rereads the file and removes it only when its token still matches, so an older owner cannot delete a replacement manifest."
+    },
+    {
+      "file": "lua/pi_nvim/registry.lua",
+      "pattern": "^function M.discover\\(project_root, override\\)$",
+      "description": "### Neovim treats registry files as untrusted discovery hints\n\nThe Lua reader mirrors the override and user-specific default directory, but accepts only bounded regular JSON files with the expected version, five-character short ID, loopback host, valid port and PID, sufficiently long token, and typed metadata. Discovery also requires the manifest's canonical project root to equal Neovim's canonical working directory. Live PIDs are sorted newest-first; dead entries are removed only after the stored session ID and token are reread and matched. A later authenticated ping is still required before a selected manifest becomes `active_session`."
+    },
+    {
+      "file": "lua/pi_nvim/annotations.lua",
+      "pattern": "^function M.add\\(bufnr, absolute_path, relative_path, start_line, end_line, comment\\)$",
+      "description": "### Pending annotations have editor-owned identity\n\nEach pending record gets an immutable local `id`/`order` plus an extmark, buffer, absolute file path, project-relative wire path, original range, and comment. The extmark lets the range move with buffer edits. The absolute path is used only to recover source text; the relative path is the value allowed to cross the project boundary. These records remain in module memory until explicit clear or acknowledged submission."
+    },
+    {
+      "file": "lua/pi_nvim/annotations.lua",
+      "pattern": "^function M.build\\(\\)$",
+      "description": "### Build creates a bounded wire snapshot\n\n`build` resolves every extmark's current range and prefers loaded buffer lines, so the snapshot can contain unsaved text; disk is only a fallback. It enforces the 1,000-line and 64 KiB excerpt limits, pads excerpts to exactly match the inclusive range, and sorts by path, range, then insertion order. The returned payload omits editor-only fields. A parallel ID list records exactly which local records produced that snapshot, which is essential if a new comment is added while the request is in flight."
+    },
+    {
+      "file": "extensions/nvim-review/protocol.ts",
+      "pattern": "^export type BridgeRequest = PingRequest \\| SubmitRequest;$",
+      "description": "### The wire model is a discriminated contract\n\nBoth request variants carry version, bearer token, session ID, and project root. `ping` has no payload; `submit` carries `ReviewAnnotation[]`, where every item has a POSIX project-relative path, inclusive line range, nonblank comment, and one source string per line. Responses use `ok` as the first discriminator: errors contain a bounded message, while `pong` or `submitted` successes echo the session identity. A submission acknowledgement also reports `accepted` or `queued` and the annotation count. The Lua [`request_for`](./lua/pi_nvim/init.lua) and client consume this same shape without a generated schema, so these mirrored names and literals are compatibility invariants."
+    },
+    {
+      "file": "extensions/nvim-review/protocol.ts",
+      "pattern": "^export function parseRequest\\(value: unknown\\): BridgeRequest \\| undefined \\{$",
+      "description": "### Validation narrows unknown JSON before trust\n\n`parseRequest` rejects wrong versions, unknown keys, empty or oversized batches, malformed ranges, mismatched source lengths, embedded newlines, and excessive comments or excerpts. Paths must already be normalized relative POSIX paths: absolute paths, backslashes, control characters, `.` and traversal are forbidden. Only after this structural check does [`ReviewBridge.handleRequestLine`](./extensions/nvim-review/bridge.ts) compare token digests in constant time and require the exact session ID and project root. Schema validity therefore never grants authority by itself."
+    },
+    {
+      "file": "lua/pi_nvim/init.lua",
+      "pattern": "^function M.submit\\(\\)$",
+      "description": "### Acknowledgement drives the cleanup transition\n\nSubmission captures the active manifest, payload, and source IDs, then marks the operation in flight. Transport errors and malformed responses leave every pending comment available for retry. Even a structurally valid success is insufficient: Neovim requires `submitted`, the same session ID, the exact payload count, and status `accepted` or `queued`. Only then does `annotations.clear(ids)` remove the submitted extmarks and records. Because cleanup uses the snapshot IDs rather than clearing all state, comments added during the request survive for the next review cycle."
+    }
+  ]
+}

@@ -1,0 +1,55 @@
+{
+  "$schema": "https://aka.ms/codetour-schema",
+  "title": "Neovim review transport to Pi",
+  "description": "Follow one submitted review from Neovim commands and live annotations across the local bridge to a Pi user message.",
+  "steps": [
+    {
+      "description": "### Orientation\n\nThis tour follows the execution path of one review submission. Neovim owns the pending annotations and constructs the request; a local TypeScript bridge authenticates it, turns it into a Pi-ready prompt, and delivers it to the active Pi session. Each boundary preserves retry safety: comments remain in Neovim until the bridge acknowledges that Pi accepted or queued them."
+    },
+    {
+      "file": "plugin/pi_nvim.lua",
+      "pattern": "^create_command\\(\"PiSubmit\", function\\(\\)",
+      "description": "### Submission command entry\n\n`:PiSubmit` is the user-facing entry point. The command contains no transport logic; it delegates immediately to [`pi_nvim.submit`](./lua/pi_nvim/init.lua), which keeps plugin registration separate from the stateful review workflow. The nearby `<Plug>(PiSubmit)` mapping reaches this same command."
+    },
+    {
+      "file": "lua/pi_nvim/annotations.lua",
+      "pattern": "^function M\\.add\\(",
+      "description": "### Annotations remain live until submission\n\nBefore `:PiSubmit`, `:PiAnnotate` stores each comment with its project-relative path, original range, buffer, and extmark. The extmark makes the range move with buffer edits, while the record keeps enough fallback data to read the file later. This in-memory collection is the source consumed by the submission path."
+    },
+    {
+      "file": "lua/pi_nvim/init.lua",
+      "pattern": "^function M\\.submit\\(\\)",
+      "description": "### Submission orchestration\n\n`submit` rejects concurrent, sessionless, or empty requests, then asks [`annotations.build`](./lua/pi_nvim/annotations.lua) for a payload. It adds protocol version, request type, token, session ID, and canonical project root before calling the TCP client. Crucially, it clears only the IDs covered by a valid `submitted` acknowledgement with the expected session, count, and status; all failures preserve comments for retry."
+    },
+    {
+      "file": "lua/pi_nvim/annotations.lua",
+      "pattern": "^function M\\.build\\(\\)",
+      "description": "### Resolve and normalize the payload\n\n`build` resolves every extmark's current range and takes source text from the loaded buffer when possible, so unsaved Neovim edits can appear in the review. It enforces excerpt limits, sorts annotations deterministically by path and range, and removes Neovim-only IDs and extmark metadata from the wire payload. The parallel ID list lets the acknowledgement clear exactly this submitted batch."
+    },
+    {
+      "file": "lua/pi_nvim/client.lua",
+      "pattern": "^function M\\.request\\(",
+      "description": "### One JSON line over TCP\n\nThe client JSON-encodes the complete request, appends a newline, checks the 1 MiB limit, and opens a TCP connection to the host and port from the selected session manifest. It reads exactly one newline-terminated response, bounds and validates it, and schedules the callback back on Neovim's event loop. This strict one-request/one-response framing prevents ambiguous partial or concatenated messages."
+    },
+    {
+      "file": "extensions/nvim-review/bridge.ts",
+      "pattern": "^  private accept\\(socket: Socket\\): void \\{",
+      "description": "### The bridge enforces wire framing\n\nThe Pi-side bridge accepts only while active, applies a timeout and byte limit, and waits for the newline delimiter. Extra non-whitespace after that first line is rejected because each connection may carry only one request. A successfully framed line moves to semantic validation; every response is also serialized as one JSON line before the socket closes."
+    },
+    {
+      "file": "extensions/nvim-review/bridge.ts",
+      "pattern": "^  private async handleRequestLine\\(",
+      "description": "### Validate before reaching Pi\n\nThe handler parses JSON and delegates structural checks to [`parseRequest`](./extensions/nvim-review/protocol.ts), which validates protocol version, allowed fields, relative paths, ranges, comments, sources, and size bounds. It then compares the access token in constant time and requires the exact session ID and project root. Only an authenticated `submit` can cross from local transport into prompt construction."
+    },
+    {
+      "file": "extensions/nvim-review/bridge.ts",
+      "pattern": "^function formatReviewPrompt\\(",
+      "description": "### Convert annotations into an actionable prompt\n\nThe bridge formats the validated annotations as one user message: instructions, canonical project root, quoted review comments, file locations, and numbered source excerpts. Keeping formatting after validation means this function can work with trusted `ReviewAnnotation` values, while preserving the reviewer context that Neovim captured."
+    },
+    {
+      "file": "extensions/nvim-review/index.ts",
+      "pattern": "onSubmit: \\(prompt, count\\) => \\{",
+      "description": "### Deliver now or queue a follow-up\n\nThe bridge's `onSubmit` callback is the final handoff to Pi. If Pi is idle, `pi.sendUserMessage(prompt)` starts processing immediately; if Pi is busy, `deliverAs: \"followUp\"` queues the review without interrupting current work. The returned `accepted` or `queued` status travels back through the JSON-line acknowledgement and is what allows Neovim to clear the submitted annotations safely."
+    }
+  ]
+}

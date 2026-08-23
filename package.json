@@ -1,17 +1,28 @@
 {
-  "name": "nvim-pi-comment",
+  "name": "pi-nvim-review",
   "version": "0.1.0",
   "description": "Send line-based Neovim review comments to a live Pi session",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jillesme/pi-nvim-review.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jillesme/pi-nvim-review/issues"
+  },
+  "homepage": "https://github.com/jillesme/pi-nvim-review#readme",
   "keywords": [
     "pi-package",
     "neovim",
     "code-review"
   ],
   "files": [
+    ".tours",
     "extensions",
     "lua",
     "plugin",
     "doc",
+    "LICENSE",
     "README.md"
   ],
   "peerDependencies": {
