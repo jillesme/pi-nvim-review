@@ -57,6 +57,10 @@ local function valid_comment(item)
     and type(item.comment) == "string"
     and item.comment ~= ""
     and #item.comment <= 16 * 1024
+    and (item.sourceFingerprint == nil
+      or (type(item.sourceFingerprint) == "string"
+        and #item.sourceFingerprint == 64
+        and item.sourceFingerprint:match("^%x+$") ~= nil))
 end
 
 local function valid_annotation(item)
@@ -97,6 +101,30 @@ local function valid_target(target, project_root)
     and target.token == nil
 end
 
+local function valid_risks(risks, maximum)
+  if risks == nil then
+    return true
+  end
+  if type(risks) ~= "table" or #risks > maximum then
+    return false
+  end
+  for _, risk in ipairs(risks) do
+    if type(risk) ~= "table"
+      or not safe_relative_path(risk.path)
+      or not positive_integer(risk.startLine, 10000000)
+      or not positive_integer(risk.endLine, 10000000)
+      or risk.endLine < risk.startLine
+      or risk.endLine - risk.startLine + 1 > 1000
+      or type(risk.modifiedBuffer) ~= "boolean"
+      or type(risk.sourceChanged) ~= "boolean"
+      or type(risk.baselineUnavailable) ~= "boolean"
+    then
+      return false
+    end
+  end
+  return true
+end
+
 local function valid_submission(submission, project_root, known_ids)
   if submission == nil then
     return true
@@ -110,10 +138,12 @@ local function valid_submission(submission, project_root, known_ids)
     or submission.sessionId == ""
     or submission.projectRoot ~= project_root
     or type(submission.createdAt) ~= "string"
+    or (submission.attempted ~= nil and type(submission.attempted) ~= "boolean")
     or type(submission.ids) ~= "table"
     or type(submission.annotations) ~= "table"
     or #submission.ids == 0
     or #submission.ids ~= #submission.annotations
+    or not valid_risks(submission.risks, #submission.annotations)
   then
     return false
   end

@@ -44,8 +44,9 @@ Requires Neovim 0.10 or newer.
 :PiSubmit                                                   *:PiSubmit*
         Send all pending comments to the active Pi session. Comments remain
         visible after any failure. A stable submission ID makes retries safe.
-        A successful acknowledgement clears only the immutable submitted
-        snapshot.
+        If source context changed, a buffer is modified, or the original
+        context is unavailable, an exact snapshot preview opens before send.
+        A successful acknowledgement clears only the submitted snapshot.
 
 :PiComments                                               *:PiComments*
         Open the review overview. It shows project, target, bridge and
@@ -54,7 +55,9 @@ Requires Neovim 0.10 or newer.
         and q to close.
 
 :PiClear                                                     *:PiClear*
-        Remove all pending comments and their extmarks without sending them.
+        Ask for confirmation, then remove all pending comments and extmarks
+        without sending them. It also cancels any retry snapshot. If the
+        review changes while confirmation is open, confirmation is rejected.
 
 ==============================================================================
 3. MODAL CONTROLS                                  *pi-nvim-modal-controls*
@@ -66,6 +69,11 @@ CTRL-N/CTRL-P to move, <Enter> to select, and <Esc> or q to cancel.
 line when the screen has enough room. Near the bottom of the screen, it uses a
 centered fallback so that the editor remains usable. Use CTRL-S to add the
 comment. Use <Esc>, CTRL-C, or normal-mode q to cancel.
+
+The submission preview shows the authenticated target, immutable submission
+ID, exact excerpts, and source-risk warnings. Use s to submit. Closing an
+unattempted preview cancels only that snapshot and keeps comments editable. A
+snapshot from an attempted delivery remains immutable for safe retry.
 
 ==============================================================================
 4. MAPPINGS                                              *pi-nvim-mappings*
@@ -140,7 +148,9 @@ always appended. An empty file omits the opening instructions.
   explicitly cancels the snapshot and clears the review.
 - A comment can cover at most 1000 lines. Requests and fields have bounded
   sizes.
-- Unsaved source text can be sent in excerpts. Save edits before Pi changes the
-  same files to avoid editor/disk conflicts.
+- Unsaved source text can be sent in excerpts. Before delivery, the plugin
+  warns about modified buffers, context changed after annotation, and restored
+  comments without a source baseline. Save edits before Pi changes the same
+  files to avoid editor/disk conflicts.
 
 vim:tw=78:ts=8:noet:ft=help:norl:

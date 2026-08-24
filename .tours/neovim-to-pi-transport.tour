@@ -19,12 +19,12 @@
     {
       "file": "lua/pi_nvim/init.lua",
       "pattern": "^function M\\.submit\\(\\)",
-      "description": "### Submission orchestration\n\n`submit` rejects concurrent, sessionless, or empty requests. It builds one payload, assigns a submission ID, and atomically saves that immutable snapshot before opening the connection. Retries reuse the same ID and content. Cleanup requires a matching typed acknowledgement and is itself saved before only the snapshot IDs are cleared."
+      "description": "### Submission orchestration\n\n`submit` rejects concurrent, sessionless, or empty requests. It atomically saves one immutable snapshot before delivery and records the attempted state before opening the connection. Risky new snapshots open the exact preview first. Retries reuse the same ID and content. Cleanup requires a matching typed acknowledgement and is saved before only the snapshot IDs are cleared."
     },
     {
       "file": "lua/pi_nvim/annotations.lua",
       "pattern": "^function M\\.build\\(\\)",
-      "description": "### Resolve and normalize the payload\n\n`build` resolves every extmark's current range and takes source text from the loaded buffer when possible, so unsaved Neovim edits can appear in the review. It enforces excerpt limits, sorts annotations deterministically by path and range, and removes Neovim-only IDs and extmark metadata from the wire payload. The parallel ID list lets the acknowledgement clear exactly this submitted batch."
+      "description": "### Resolve, compare, and normalize the payload\n\n`build` resolves every extmark's current range and takes source text from the loaded buffer when possible. It compares each excerpt with the fingerprint captured when the comment was written and records modified-buffer, changed-context, or missing-baseline risks. It then enforces excerpt limits, sorts deterministically, and removes editor-only identity from the wire payload."
     },
     {
       "file": "lua/pi_nvim/client.lua",

@@ -26,6 +26,10 @@ local function loaded_buffer(buffer)
   return valid_buffer(buffer) and vim.api.nvim_buf_is_loaded(buffer)
 end
 
+local function source_fingerprint(lines)
+  return vim.fn.sha256(vim.json.encode(lines))
+end
+
 local function set_mark(record)
   if not loaded_buffer(record.bufnr) then
     return nil
@@ -89,6 +93,7 @@ function M.count()
 end
 
 function M.add(bufnr, absolute_path, relative_path, start_line, end_line, comment)
+  local ok, initial_source = pcall(vim.api.nvim_buf_get_lines, bufnr, start_line - 1, end_line, false)
   local id = next_id
   next_id = next_id + 1
   local record = {
@@ -100,6 +105,7 @@ function M.add(bufnr, absolute_path, relative_path, start_line, end_line, commen
     start_line = start_line,
     end_line = end_line,
     comment = comment,
+    source_fingerprint = ok and source_fingerprint(initial_source) or nil,
   }
   local mark_error = set_mark(record)
   if mark_error then
@@ -144,6 +150,7 @@ function M.restore(project_root, items)
       start_line = item.startLine,
       end_line = item.endLine,
       comment = item.comment,
+      source_fingerprint = item.sourceFingerprint,
     }
     records[#records + 1] = record
     maximum_id = math.max(maximum_id, record.id)
@@ -166,6 +173,7 @@ function M.list()
       start_line = record.start_line,
       end_line = record.end_line,
       comment = record.comment,
+      source_fingerprint = record.source_fingerprint,
       modified = loaded_buffer(record.bufnr) and vim.bo[record.bufnr].modified or false,
     }
   end
@@ -185,6 +193,7 @@ function M.serialize()
       startLine = record.start_line,
       endLine = record.end_line,
       comment = record.comment,
+      sourceFingerprint = record.source_fingerprint,
     }
   end
   return result
@@ -291,6 +300,7 @@ end
 
 function M.build()
   local resolved = {}
+  local risks = {}
   for _, record in ipairs(records) do
     local start_line, end_line = current_range(record)
     if end_line - start_line + 1 > MAX_SOURCE_LINES then
@@ -300,6 +310,22 @@ function M.build()
     local source, source_error = source_lines(record, start_line, end_line)
     if not source then
       return nil, nil, source_error
+    end
+
+    local modified_buffer = loaded_buffer(record.bufnr) and vim.bo[record.bufnr].modified or false
+    local current_fingerprint = source_fingerprint(source)
+    local source_changed = record.source_fingerprint ~= nil
+      and current_fingerprint ~= record.source_fingerprint
+    local baseline_unavailable = record.source_fingerprint == nil
+    if modified_buffer or source_changed or baseline_unavailable then
+      risks[#risks + 1] = {
+        path = record.path,
+        startLine = start_line,
+        endLine = end_line,
+        modifiedBuffer = modified_buffer,
+        sourceChanged = source_changed,
+        baselineUnavailable = baseline_unavailable,
+      }
     end
 
     resolved[#resolved + 1] = {
@@ -338,7 +364,7 @@ function M.build()
       source = annotation.source,
     }
   end
-  return payload, ids
+  return payload, ids, nil, risks
 end
 
 function M.clear(ids)

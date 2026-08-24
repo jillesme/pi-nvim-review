@@ -399,6 +399,32 @@ local function new_submission_id()
   }, ":"))
 end
 
+local function prepare_submission_snapshot()
+  if pending_submission then
+    return pending_submission, false
+  end
+
+  local payload, ids, build_error, risks = annotations.build()
+  if not payload then
+    return nil, false, build_error or "could not build review payload"
+  end
+  pending_submission = {
+    submissionId = new_submission_id(),
+    sessionId = active_session.sessionId,
+    projectRoot = active_session.projectRoot,
+    createdAt = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+    attempted = false,
+    ids = ids,
+    annotations = payload,
+    risks = risks,
+  }
+  if not persist_workspace() then
+    pending_submission = nil
+    return nil, false, "submission was cancelled because its retry snapshot could not be saved"
+  end
+  return pending_submission, true
+end
+
 function M.submit()
   if not ensure_workspace() then
     return
@@ -425,28 +451,26 @@ function M.submit()
     return
   end
 
-  if not pending_submission then
-    local payload, ids, build_error = annotations.build()
-    if not payload then
-      notify(build_error or "could not build review payload", vim.log.levels.ERROR)
-      return
-    end
-    pending_submission = {
-      submissionId = new_submission_id(),
-      sessionId = active_session.sessionId,
-      projectRoot = active_session.projectRoot,
-      createdAt = os.date("!%Y-%m-%dT%H:%M:%SZ"),
-      ids = ids,
-      annotations = payload,
-    }
+  local snapshot, created, prepare_error = prepare_submission_snapshot()
+  if not snapshot then
+    notify(prepare_error, vim.log.levels.ERROR)
+    return
+  end
+  if created and #snapshot.risks > 0 then
+    notify("review the submission warnings before sending", vim.log.levels.WARN)
+    M.preview()
+    return
+  end
+
+  if snapshot.attempted == false then
+    snapshot.attempted = true
     if not persist_workspace() then
-      pending_submission = nil
-      notify("submission was cancelled because its retry snapshot could not be saved", vim.log.levels.ERROR)
+      snapshot.attempted = false
+      notify("submission was cancelled because its attempted state could not be saved", vim.log.levels.ERROR)
       return
     end
   end
 
-  local snapshot = pending_submission
   local session = active_session
   local request = request_for(session, "submit")
   request.submissionId = snapshot.submissionId
@@ -506,8 +530,11 @@ function M.submit()
 end
 
 function M.clear()
-  if client_state == "submitting" then
-    notify("wait for the current submission before clearing comments", vim.log.levels.WARN)
+  if not ensure_workspace() then
+    return
+  end
+  if client_state == "submitting" or client_state == "connecting" then
+    notify("wait for the current Pi request before clearing comments", vim.log.levels.WARN)
     return
   end
 
@@ -516,14 +543,42 @@ function M.clear()
     notify("there are no comments to clear")
     return
   end
-  local saved, save_error = draft.save(draft_root, draft_target, {}, nil)
-  if not saved then
-    notify(save_error or "could not save the cleared draft", vim.log.levels.ERROR)
-    return
-  end
-  annotations.clear()
-  pending_submission = nil
-  notify(string.format("cleared %d pending comment%s", count, count == 1 and "" or "s"))
+
+  local confirmed_root = draft_root
+  local confirmed_comments = annotations.serialize()
+  local confirmed_submission_id = pending_submission and pending_submission.submissionId or nil
+  local snapshot_note = confirmed_submission_id and " and cancel its retry snapshot" or ""
+  vim.ui.select({ "Keep review", "Clear review" }, {
+    prompt = string.format(
+      "Permanently clear %d pending comment%s%s?",
+      count,
+      count == 1 and "" or "s",
+      snapshot_note
+    ),
+  }, function(selection)
+    if selection ~= "Clear review" then
+      return
+    end
+    if draft_root ~= confirmed_root
+      or current_root() ~= confirmed_root
+      or client_state == "submitting"
+      or client_state == "connecting"
+      or not vim.deep_equal(annotations.serialize(), confirmed_comments)
+      or (pending_submission and pending_submission.submissionId or nil) ~= confirmed_submission_id
+    then
+      notify("the pending review changed; run :PiClear again to confirm the current review", vim.log.levels.WARN)
+      return
+    end
+
+    local saved, save_error = draft.save(draft_root, draft_target, {}, nil)
+    if not saved then
+      notify(save_error or "could not save the cleared draft", vim.log.levels.ERROR)
+      return
+    end
+    annotations.clear()
+    pending_submission = nil
+    notify(string.format("cleared %d pending comment%s", count, count == 1 and "" or "s"))
+  end)
 end
 
 local function overview_lines()
@@ -561,26 +616,53 @@ local function overview_lines()
   return lines, line_ids
 end
 
-local function preview_lines()
-  local payload = pending_submission and pending_submission.annotations or nil
-  if not payload then
-    local build_error
-    payload, _, build_error = annotations.build()
-    if not payload then
-      return nil, build_error
-    end
-  end
-
-  local target = active_session or draft_target
+local function preview_lines(snapshot)
+  local target = active_session
   local lines = {
-    "# Pi review submission",
+    "# Exact Pi review snapshot",
     "",
     "Target: " .. display_name(target),
-    "Project: `" .. (draft_root or "none") .. "`",
-    "Submission ID: `" .. (pending_submission and pending_submission.submissionId or "assigned on submit") .. "`",
+    "Target session ID: `" .. target.sessionId .. "`",
+    "Project: `" .. snapshot.projectRoot .. "`",
+    "Submission ID: `" .. snapshot.submissionId .. "`",
+    "Created: " .. snapshot.createdAt,
+    "Delivery attempted: " .. (snapshot.attempted == false and "no" or "yes or unknown"),
+    "",
+    "This immutable snapshot is the exact payload that retry and submit will send.",
     "",
   }
-  for index, item in ipairs(payload) do
+
+  if snapshot.risks == nil then
+    lines[#lines + 1] = "## Submission warning"
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "- Source-risk metadata is unavailable for this restored snapshot. Check every excerpt before sending."
+    lines[#lines + 1] = ""
+  elseif #snapshot.risks > 0 then
+    lines[#lines + 1] = "## Submission warnings"
+    lines[#lines + 1] = ""
+    for _, risk in ipairs(snapshot.risks) do
+      local location = risk.startLine == risk.endLine
+        and tostring(risk.startLine)
+        or string.format("%d-%d", risk.startLine, risk.endLine)
+      local reasons = {}
+      if risk.modifiedBuffer then
+        reasons[#reasons + 1] = "excerpt comes from a buffer with unsaved changes"
+      end
+      if risk.sourceChanged then
+        reasons[#reasons + 1] = "source context changed after the comment was written"
+      end
+      if risk.baselineUnavailable then
+        reasons[#reasons + 1] = "original source context is unavailable"
+      end
+      lines[#lines + 1] = string.format("- `%s:%s`: %s.", risk.path, location, table.concat(reasons, "; "))
+    end
+    lines[#lines + 1] = ""
+  else
+    lines[#lines + 1] = "Submission warnings: none."
+    lines[#lines + 1] = ""
+  end
+
+  for index, item in ipairs(snapshot.annotations) do
     local location = item.startLine == item.endLine
       and tostring(item.startLine)
       or string.format("%d-%d", item.startLine, item.endLine)
@@ -604,23 +686,57 @@ function M.preview()
   if not ensure_workspace() then
     return
   end
+  if client_state == "submitting" or client_state == "connecting" then
+    notify("wait for the current Pi request before previewing comments", vim.log.levels.WARN)
+    return
+  end
+  if not active_session or client_state ~= "ready" then
+    notify("select a live session with :Pi before creating an exact preview", vim.log.levels.WARN)
+    return
+  end
   if annotations.count() == 0 then
     notify("there are no comments to preview", vim.log.levels.WARN)
     return
   end
-  local lines, build_error = preview_lines()
-  if not lines then
-    notify(build_error or "could not build preview", vim.log.levels.ERROR)
+  if pending_submission and pending_submission.sessionId ~= active_session.sessionId then
+    notify("the retry snapshot belongs to another Pi session; use :Pi to rebind it explicitly", vim.log.levels.WARN)
     return
   end
-  local _, modal_error = modal.preview({ lines = lines }, function(action)
+
+  local snapshot, _, prepare_error = prepare_submission_snapshot()
+  if not snapshot then
+    notify(prepare_error, vim.log.levels.ERROR)
+    return
+  end
+  local lines = preview_lines(snapshot)
+  local cancel_on_close = snapshot.attempted == false
+  local function cancel_preview_snapshot()
+    if not cancel_on_close
+      or not pending_submission
+      or pending_submission.submissionId ~= snapshot.submissionId
+      or pending_submission.attempted ~= false
+    then
+      return
+    end
+    local saved, save_error = draft.save(draft_root, draft_target, annotations.serialize(), nil)
+    if not saved then
+      notify(save_error or "could not cancel the preview snapshot", vim.log.levels.ERROR)
+    else
+      pending_submission = nil
+    end
+  end
+
+  local footer = cancel_on_close and " s submit · q cancel snapshot " or " s retry · q close "
+  local _, modal_error = modal.preview({ lines = lines, footer = footer }, function(action)
     if action == "submit" then
       M.submit()
-    else
-      vim.schedule(M.comments)
+      return
     end
+    cancel_preview_snapshot()
+    vim.schedule(M.comments)
   end)
   if modal_error then
+    cancel_preview_snapshot()
     notify("could not open submission preview: " .. modal_error, vim.log.levels.ERROR)
   end
 end
