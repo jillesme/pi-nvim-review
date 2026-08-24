@@ -4,7 +4,7 @@
   "description": "Understand the shared Pi/Neovim data model, its validation boundaries, and the state transitions that keep review comments safe.",
   "steps": [
     {
-      "description": "### Orientation\n\nThis tour treats the integration as a set of shared contracts, not as a transport timeline. It starts with the discovery manifest, then follows pending annotations into the versioned request and response model. The main invariant is ownership: filesystem data and network JSON stay untrusted until validated, while Neovim keeps pending comments until Pi returns a matching acknowledgement."
+      "description": "### Orientation\n\nThis tour treats the integration as a set of shared contracts. It follows discovery metadata, persistent editor records, immutable submission snapshots, and typed wire results. Filesystem data and network JSON stay untrusted until validated. Cleanup happens only after Pi returns the result for the exact saved submission identity."
     },
     {
       "file": "extensions/nvim-review/protocol.ts",
@@ -24,7 +24,12 @@
     {
       "file": "lua/pi_nvim/annotations.lua",
       "pattern": "^function M.add\\(bufnr, absolute_path, relative_path, start_line, end_line, comment\\)$",
-      "description": "### Pending annotations have editor-owned identity\n\nEach pending record gets an immutable local `id`/`order` plus an extmark, buffer, absolute file path, project-relative wire path, original range, and comment. The extmark lets the range move with buffer edits. The absolute path is used only to recover source text; the relative path is the value allowed to cross the project boundary. These records remain in module memory until explicit clear or acknowledged submission."
+      "description": "### Pending annotations have editor-owned identity\n\nEach pending record gets a stable local `id`/`order` plus an extmark, buffer, absolute file path, project-relative wire path, range, and comment. Extmarks follow edits. Serialization keeps stable IDs and current ranges, while the wire builder omits editor-only fields."
+    },
+    {
+      "file": "lua/pi_nvim/draft.lua",
+      "pattern": "^function M.save\\(project_root, target, comments, submission\\)$",
+      "description": "### Drafts are private atomic project state\n\nThe versioned draft is keyed by a hash of the canonical project root. It contains comments, stable IDs, token-free target metadata, and any immutable retry snapshot. Validation rejects unsafe paths, malformed snapshots, symlinks, and unsafe Unix ownership or permissions. Saving writes and syncs a `0600` temporary file before atomic rename. Corrupt input is kept for recovery."
     },
     {
       "file": "lua/pi_nvim/annotations.lua",
@@ -34,17 +39,17 @@
     {
       "file": "extensions/nvim-review/protocol.ts",
       "pattern": "^export type BridgeRequest = PingRequest \\| SubmitRequest;$",
-      "description": "### The wire model is a discriminated contract\n\nBoth request variants carry version, bearer token, session ID, and project root. `ping` has no payload; `submit` carries `ReviewAnnotation[]`, where every item has a POSIX project-relative path, inclusive line range, nonblank comment, and one source string per line. Responses use `ok` as the first discriminator: errors contain a bounded message, while `pong` or `submitted` successes echo the session identity. A submission acknowledgement also reports `accepted` or `queued` and the annotation count. The Lua [`request_for`](./lua/pi_nvim/init.lua) and client consume this same shape without a generated schema, so these mirrored names and literals are compatibility invariants."
+      "description": "### The wire model is a typed discriminated contract\n\nBoth requests carry version, token, session ID, and root. `submit` also carries a stable submission ID and annotations. Success echoes session identity; submission success also echoes submission identity, status, and count. Errors carry bounded `code`, `message`, `retryable`, and optional identities, so Lua chooses retry and manifest behavior without parsing prose."
     },
     {
       "file": "extensions/nvim-review/protocol.ts",
-      "pattern": "^export function parseRequest\\(value: unknown\\): BridgeRequest \\| undefined \\{$",
+      "pattern": "^export function parseRequest\\(value: unknown\\): RequestParseResult \\{$",
       "description": "### Validation narrows unknown JSON before trust\n\n`parseRequest` rejects wrong versions, unknown keys, empty or oversized batches, malformed ranges, mismatched source lengths, embedded newlines, and excessive comments or excerpts. Paths must already be normalized relative POSIX paths: absolute paths, backslashes, control characters, `.` and traversal are forbidden. Only after this structural check does [`ReviewBridge.handleRequestLine`](./extensions/nvim-review/bridge.ts) compare token digests in constant time and require the exact session ID and project root. Schema validity therefore never grants authority by itself."
     },
     {
       "file": "lua/pi_nvim/init.lua",
       "pattern": "^function M.submit\\(\\)$",
-      "description": "### Acknowledgement drives the cleanup transition\n\nSubmission captures the active manifest, payload, and source IDs, then marks the operation in flight. Transport errors and malformed responses leave every pending comment available for retry. Even a structurally valid success is insufficient: Neovim requires `submitted`, the same session ID, the exact payload count, and status `accepted` or `queued`. Only then does `annotations.clear(ids)` remove the submitted extmarks and records. Because cleanup uses the snapshot IDs rather than clearing all state, comments added during the request survive for the next review cycle."
+      "description": "### Acknowledgement drives durable cleanup\n\nSubmission first persists the session-bound snapshot ID, annotation payload, and source record IDs. Typed failures preserve that exact retry state. A success must echo `submitted`, session ID, submission ID, and count. Neovim atomically saves the remaining draft before clearing only the acknowledged IDs in memory, so a crash cannot restore an already-cleared ambiguous snapshot."
     }
   ]
 }

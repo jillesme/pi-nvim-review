@@ -4,26 +4,72 @@ local M = {}
 local MAX_REQUEST_BYTES = 1024 * 1024
 local MAX_RESPONSE_BYTES = 64 * 1024
 
+local error_codes = {
+  invalid_json = true,
+  incompatible_version = true,
+  invalid_request = true,
+  authentication_failed = true,
+  stale_session = true,
+  bridge_stopping = true,
+  busy = true,
+  timeout = true,
+  transport_error = true,
+  invalid_response = true,
+  internal_error = true,
+}
+
+local function local_error(code, message, retryable, manifest, request)
+  return {
+    code = code,
+    message = message,
+    retryable = retryable,
+    sessionId = manifest and manifest.sessionId or nil,
+    submissionId = request and request.submissionId or nil,
+  }
+end
+
 local function valid_response(response)
-  if type(response) ~= "table" or response.protocolVersion ~= 1 or type(response.ok) ~= "boolean" then
+  if type(response) ~= "table" or response.protocolVersion ~= 2 or type(response.ok) ~= "boolean" then
     return false
   end
   if response.ok then
-    return response.type == "pong" or response.type == "submitted"
+    if response.type == "pong" then
+      return type(response.sessionId) == "string"
+    end
+    return response.type == "submitted"
+      and type(response.sessionId) == "string"
+      and type(response.submissionId) == "string"
+      and (response.status == "accepted" or response.status == "queued")
+      and type(response.count) == "number"
+      and response.count > 0
+      and response.count % 1 == 0
   end
-  return type(response.error) == "string" and response.error ~= ""
+  return error_codes[response.code] == true
+    and type(response.message) == "string"
+    and response.message ~= ""
+    and #response.message <= 512
+    and type(response.retryable) == "boolean"
+    and (response.sessionId == nil or type(response.sessionId) == "string")
+    and (response.submissionId == nil or type(response.submissionId) == "string")
+end
+
+function M.message(err)
+  if type(err) == "table" and type(err.message) == "string" then
+    return err.message
+  end
+  return tostring(err)
 end
 
 function M.request(manifest, request, timeout_ms, callback)
   local ok, encoded = pcall(vim.json.encode, request)
   if not ok then
-    callback("Could not encode bridge request: " .. tostring(encoded))
+    callback(local_error("invalid_request", "Could not encode bridge request: " .. tostring(encoded), false, manifest, request))
     return
   end
 
   local wire = encoded .. "\n"
   if #wire > MAX_REQUEST_BYTES then
-    callback("Bridge request is larger than 1 MiB")
+    callback(local_error("invalid_request", "Bridge request is larger than 1 MiB", false, manifest, request))
     return
   end
 
@@ -60,29 +106,53 @@ function M.request(manifest, request, timeout_ms, callback)
   end
 
   timer:start(timeout_ms, 0, function()
-    finish(string.format("Connection to Pi session %s timed out", manifest.shortId))
+    finish(local_error(
+      "timeout",
+      string.format("Connection to Pi session %s timed out", manifest.shortId),
+      true,
+      manifest,
+      request
+    ))
   end)
 
   socket:connect(manifest.host, manifest.port, function(connect_error)
     if connect_error then
-      finish("Could not connect to Pi session " .. manifest.shortId .. ": " .. connect_error)
+      finish(local_error(
+        "transport_error",
+        "Could not connect to Pi session " .. manifest.shortId .. ": " .. connect_error,
+        true,
+        manifest,
+        request
+      ))
       return
     end
 
     reading = true
     socket:read_start(function(read_error, chunk)
       if read_error then
-        finish("Could not read Pi bridge response: " .. read_error)
+        finish(local_error(
+          "transport_error",
+          "Could not read Pi bridge response: " .. read_error,
+          true,
+          manifest,
+          request
+        ))
         return
       end
       if not chunk then
-        finish("Pi bridge closed before it returned a response")
+        finish(local_error(
+          "transport_error",
+          "Pi bridge closed before it returned a response",
+          true,
+          manifest,
+          request
+        ))
         return
       end
 
       response_text = response_text .. chunk
       if #response_text > MAX_RESPONSE_BYTES then
-        finish("Pi bridge response is too large")
+        finish(local_error("invalid_response", "Pi bridge response is too large", true, manifest, request))
         return
       end
 
@@ -92,17 +162,17 @@ function M.request(manifest, request, timeout_ms, callback)
       end
 
       if response_text:sub(newline + 1):find("%S") then
-        finish("Pi bridge returned more than one response")
+        finish(local_error("invalid_response", "Pi bridge returned more than one response", true, manifest, request))
         return
       end
 
       local decode_ok, response = pcall(vim.json.decode, response_text:sub(1, newline - 1))
       if not decode_ok or not valid_response(response) then
-        finish("Pi bridge returned an invalid response")
+        finish(local_error("invalid_response", "Pi bridge returned an invalid response", true, manifest, request))
         return
       end
       if not response.ok then
-        finish(response.error)
+        finish(response)
         return
       end
       finish(nil, response)
@@ -110,7 +180,13 @@ function M.request(manifest, request, timeout_ms, callback)
 
     socket:write(wire, function(write_error)
       if write_error then
-        finish("Could not send request to Pi bridge: " .. write_error)
+        finish(local_error(
+          "transport_error",
+          "Could not send request to Pi bridge: " .. write_error,
+          true,
+          manifest,
+          request
+        ))
       end
     end)
   end)

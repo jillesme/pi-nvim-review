@@ -4,7 +4,7 @@
   "description": "Follow one submitted review from Neovim commands and live annotations across the local bridge to a Pi user message.",
   "steps": [
     {
-      "description": "### Orientation\n\nThis tour follows the execution path of one review submission. Neovim owns the pending annotations and constructs the request; a local TypeScript bridge authenticates it, turns it into a Pi-ready prompt, and delivers it to the active Pi session. Each boundary preserves retry safety: comments remain in Neovim until the bridge acknowledges that Pi accepted or queued them."
+      "description": "### Orientation\n\nThis tour follows one immutable review snapshot from Neovim to Pi. Neovim saves the snapshot and its stable submission ID before transport. The TypeScript bridge authenticates it, serializes delivery, and caches accepted results so a retry after a lost acknowledgement does not send the review twice."
     },
     {
       "file": "plugin/pi_nvim.lua",
@@ -14,12 +14,12 @@
     {
       "file": "lua/pi_nvim/annotations.lua",
       "pattern": "^function M\\.add\\(",
-      "description": "### Annotations remain live until submission\n\nBefore `:PiSubmit`, `:PiAnnotate` stores each comment with its project-relative path, original range, buffer, and extmark. The extmark makes the range move with buffer edits, while the record keeps enough fallback data to read the file later. This in-memory collection is the source consumed by the submission path."
+      "description": "### Annotations remain live and recoverable\n\nBefore `:PiSubmit`, `:PiAnnotate` stores each comment with a stable ID, project-relative path, range, buffer, and extmark. The extmark follows buffer edits. The controller atomically persists the records by canonical project root, so a Neovim restart can restore the same pending review without storing a bridge token."
     },
     {
       "file": "lua/pi_nvim/init.lua",
       "pattern": "^function M\\.submit\\(\\)",
-      "description": "### Submission orchestration\n\n`submit` rejects concurrent, sessionless, or empty requests, then asks [`annotations.build`](./lua/pi_nvim/annotations.lua) for a payload. It adds protocol version, request type, token, session ID, and canonical project root before calling the TCP client. Crucially, it clears only the IDs covered by a valid `submitted` acknowledgement with the expected session, count, and status; all failures preserve comments for retry."
+      "description": "### Submission orchestration\n\n`submit` rejects concurrent, sessionless, or empty requests. It builds one payload, assigns a submission ID, and atomically saves that immutable snapshot before opening the connection. Retries reuse the same ID and content. Cleanup requires a matching typed acknowledgement and is itself saved before only the snapshot IDs are cleared."
     },
     {
       "file": "lua/pi_nvim/annotations.lua",
@@ -34,12 +34,12 @@
     {
       "file": "extensions/nvim-review/bridge.ts",
       "pattern": "^  private accept\\(socket: Socket\\): void \\{",
-      "description": "### The bridge enforces wire framing\n\nThe Pi-side bridge accepts only while active, applies a timeout and byte limit, and waits for the newline delimiter. Extra non-whitespace after that first line is rejected because each connection may carry only one request. A successfully framed line moves to semantic validation; every response is also serialized as one JSON line before the socket closes."
+      "description": "### The bridge enforces framing and lifecycle\n\nThe bridge accepts sockets only in its `running` state, applies a timeout and byte limit, and permits one newline-delimited request per connection. Shutdown changes the state before closing sockets, cancels handlers that have not entered delivery, and drains delivery that already started. Every response is one JSON line."
     },
     {
       "file": "extensions/nvim-review/bridge.ts",
       "pattern": "^  private async handleRequestLine\\(",
-      "description": "### Validate before reaching Pi\n\nThe handler parses JSON and delegates structural checks to [`parseRequest`](./extensions/nvim-review/protocol.ts), which validates protocol version, allowed fields, relative paths, ranges, comments, sources, and size bounds. It then compares the access token in constant time and requires the exact session ID and project root. Only an authenticated `submit` can cross from local transport into prompt construction."
+      "description": "### Validate, deduplicate, and serialize\n\nThe handler validates the protocol shape, compares the access token in constant time, and requires the exact session and root. For submissions it fingerprints canonical content. A cached ID returns its prior result, reuse with different content is rejected, and a second active delivery gets a typed `busy` result. Only then can prompt construction reach Pi."
     },
     {
       "file": "extensions/nvim-review/bridge.ts",
@@ -49,7 +49,7 @@
     {
       "file": "extensions/nvim-review/index.ts",
       "pattern": "onSubmit: \\(prompt, count\\) => \\{",
-      "description": "### Deliver now or queue a follow-up\n\nThe bridge's `onSubmit` callback is the final handoff to Pi. If Pi is idle, `pi.sendUserMessage(prompt)` starts processing immediately; if Pi is busy, `deliverAs: \"followUp\"` queues the review without interrupting current work. The returned `accepted` or `queued` status travels back through the JSON-line acknowledgement and is what allows Neovim to clear the submitted annotations safely."
+      "description": "### Deliver now or queue a follow-up\n\nThe bridge's `onSubmit` callback is the final handoff to Pi. If Pi is idle, `pi.sendUserMessage(prompt)` starts processing immediately; if Pi is busy, `deliverAs: \"followUp\"` queues the review. After delivery, the bridge caches the typed `accepted` or `queued` result before it sends the acknowledgement. UI notification failure cannot turn accepted delivery into a retry."
     }
   ]
 }

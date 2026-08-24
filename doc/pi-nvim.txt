@@ -32,8 +32,9 @@ Requires Neovim 0.10 or newer.
 2. COMMANDS                                              *pi-nvim-commands*
 
 :Pi                                                             *:Pi*
-        Select a live Pi bridge whose canonical project root equals
-        Neovim's current working directory.
+        Connect to a live Pi bridge whose canonical project root equals
+        Neovim's current working directory. One matching session is selected
+        automatically. Several matching sessions open a picker.
 
 :[range]PiAnnotate                                      *:PiAnnotate*
         Ask for a review comment and attach it to the current line or supplied
@@ -42,8 +43,15 @@ Requires Neovim 0.10 or newer.
 
 :PiSubmit                                                   *:PiSubmit*
         Send all pending comments to the active Pi session. Comments remain
-        visible after any failure. A successful acknowledgement clears only
-        the submitted comments.
+        visible after any failure. A stable submission ID makes retries safe.
+        A successful acknowledgement clears only the immutable submitted
+        snapshot.
+
+:PiComments                                               *:PiComments*
+        Open the review overview. It shows project, target, bridge and
+        submission state, full comments, ranges, and modified-buffer state.
+        Use <Enter> to jump, e to edit, d to delete, p to preview, s to submit,
+        and q to close.
 
 :PiClear                                                     *:PiClear*
         Remove all pending comments and their extmarks without sending them.
@@ -51,8 +59,8 @@ Requires Neovim 0.10 or newer.
 ==============================================================================
 3. MODAL CONTROLS                                  *pi-nvim-modal-controls*
 
-:Pi opens a centered session picker. Use j/k or CTRL-N/CTRL-P to move, <Enter>
-to select, and <Esc> or q to cancel.
+:Pi opens a centered session picker when several sessions match. Use j/k or
+CTRL-N/CTRL-P to move, <Enter> to select, and <Esc> or q to cancel.
 
 :PiAnnotate opens a multiline comment editor below the selected or current
 line when the screen has enough room. Near the bottom of the screen, it uses a
@@ -72,6 +80,10 @@ Normal and Visual <leader>pa
 Normal <leader>ps
         <Plug>(PiSubmit)
         Submit all pending comments.
+
+No default
+        <Plug>(PiComments)
+        Open the pending review overview.
 
 Disable defaults before plugin startup: >lua
 
@@ -120,10 +132,12 @@ always appended. An empty file omits the opening instructions.
 
 - The Pi process that handled /nvim owns the bridge and must stay open. Pi
   exit, session replacement, and /reload close it.
-- Pending comments are held only in Neovim memory.
 - :Pi uses exact canonical current-directory matching, not Git root detection.
-- Pending comments prevent :Pi from changing sessions. Use :PiSubmit or
-  :PiClear first. This is an MVP safety restriction.
+- Pending reviews are stored by canonical project root below Neovim's state
+  directory. Tokens are never stored, so restored drafts require :Pi to
+  authenticate again.
+- Comments in a stable retry snapshot cannot be edited or deleted. :PiClear
+  explicitly cancels the snapshot and clears the review.
 - A comment can cover at most 1000 lines. Requests and fields have bounded
   sizes.
 - Unsaved source text can be sent in excerpts. Save edits before Pi changes the

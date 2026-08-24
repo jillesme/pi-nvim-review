@@ -63,10 +63,11 @@ pi -e /absolute/path/to/pi-nvim-review/extensions/nvim-review/index.ts
 
 | Command | Action |
 | --- | --- |
-| `:Pi` | List live sessions for Neovim's canonical current working directory and select one. |
+| `:Pi` | Connect to a live session for Neovim's canonical current working directory. A sole session is selected automatically. |
 | `:[range]PiAnnotate` | Add a comment to the current line or supplied line range. |
+| `:PiComments` | Open the pending review overview to jump, edit, delete, preview, or submit. |
 | `:PiSubmit` | Submit all pending comments to the active session. |
-| `:PiClear` | Remove all pending comments without submitting them. |
+| `:PiClear` | Remove all pending comments and cancel any retry snapshot. |
 
 Neovim requires user commands to start with an uppercase letter. This is why the commands use `:Pi` and `:PiSubmit`, not lowercase or hyphenated names.
 
@@ -82,7 +83,7 @@ Neovim requires user commands to start with an uppercase letter. This is why the
    ```
 
 3. Keep that Pi process open. Open Neovim with the same project root as its current working directory.
-4. Run `:Pi`, move through the modal session picker, and press `<Enter>` on `abc13`.
+4. Run `:Pi`. Neovim authenticates and selects `abc13` automatically when it is the only matching session. If several sessions match, select one in the modal picker.
 5. Add comments:
    - normal mode `<leader>pa` opens a multiline comment modal for the current line;
    - visual mode `<leader>pa` opens it for the selected line range;
@@ -91,7 +92,9 @@ Neovim requires user commands to start with an uppercase letter. This is why the
 
 Pi receives one user message with sorted project-relative paths, current line ranges, source excerpts, and comments. If Pi is idle, processing starts immediately. If Pi is busy, the review is queued as a follow-up and does not interrupt the current task.
 
-After Pi accepts the message, Neovim removes the submitted signs and comments. The selected session stays active, so you can start another review cycle.
+After Pi accepts the message, Neovim removes only the comments in the acknowledged immutable snapshot. The selected session stays active, so you can start another review cycle. A stable submission ID makes a retry safe if delivery succeeds but the TCP acknowledgement is lost.
+
+Pending reviews are saved atomically by canonical project root below Neovim's state directory. Comments, stable IDs, target metadata, and retry snapshots survive a restart. Access tokens are never stored. Run `:Pi` after restoration to authenticate to a live bridge.
 
 ## Review prompt
 
@@ -119,7 +122,9 @@ If the file exists but cannot be read, submission fails and Neovim keeps the pen
 
 ## Modal controls
 
-`:Pi` opens a centered session picker. Use `j`/`k` or `<C-n>`/`<C-p>` to move, `<Enter>` to select, and `<Esc>` or `q` to cancel.
+`:Pi` opens a centered session picker only when several matching sessions exist. Use `j`/`k` or `<C-n>`/`<C-p>` to move, `<Enter>` to select, and `<Esc>` or `q` to cancel.
+
+`:PiComments` opens the review overview. Use `<Enter>` to jump to a comment, `e` to edit, `d` to delete, `p` to preview, `s` to submit, and `q` to close. A comment in a stable retry snapshot cannot be edited or deleted until it is acknowledged or cancelled with `:PiClear`.
 
 `:PiAnnotate` opens a bordered multiline editor below the selected or current line when there is enough room. It uses a centered file-window fallback near the bottom of the screen. Press `<C-s>` in normal or insert mode to add the comment. Press `<Esc>`, `<C-c>`, or normal-mode `q` to cancel it.
 
@@ -129,6 +134,7 @@ The plugin defines these `<Plug>` targets:
 
 - `<Plug>(PiAnnotate)` in normal and visual modes
 - `<Plug>(PiSubmit)` in normal mode
+- `<Plug>(PiComments)` in normal mode
 
 It adds the following defaults only when the left-hand side is free and no mapping already targets the matching `<Plug>` mapping:
 
@@ -183,9 +189,8 @@ By default, both plugins use a user-specific directory below the operating syste
 ## MVP restrictions
 
 - **The Pi process must stay open.** The bridge belongs to the Pi process that handled `/nvim`. Pi exit, session replacement, or `/reload` closes it. A future version can move ownership to a detached Pi RPC process.
-- **Comments are in memory only.** Exiting Neovim loses comments that were not submitted.
 - **The project root must match.** `:Pi` compares Pi's canonical startup directory with Neovim's canonical `getcwd()`. Use `:cd` to enter the Pi project root before `:Pi`.
-- **Pending comments lock session selection.** While comments are pending, `:Pi` will not change sessions. Use `:PiSubmit` or `:PiClear` first. This prevents comments from going to the wrong Pi session.
+- **Restored drafts require fresh authentication.** Drafts contain target metadata but no bridge token. Use `:Pi` before submission. Rebinding a pending review to another authenticated same-project session is explicit and cancels any old retry identity while keeping the comments.
 - **Only existing project files are accepted.** Unnamed buffers, special buffers, missing files, and files that resolve outside the selected project root cannot be annotated.
 - Source excerpts can contain unsaved Neovim buffer text. Save related edits before Pi changes the same files to avoid normal editor/disk conflicts.
 
@@ -193,10 +198,10 @@ By default, both plugins use a user-specific directory below the operating syste
 
 A submission clears comments only after the selected Pi bridge validates and accepts it. Invalid payloads, timeouts, dead sessions, and delivery errors keep all comments for retry.
 
-A Pi crash can leave a stale temporary manifest. `:Pi` filters dead process IDs and removes a selected manifest when its authenticated ping fails.
+A Pi crash can leave a stale temporary manifest. `:Pi` filters dead process IDs. A transient timeout or transport error keeps the manifest; Neovim removes it only when the producer process is dead or the bridge returns a typed stale-session result.
 
 ## Local protocol
 
-`/nvim` binds an ephemeral TCP port on `127.0.0.1`. Its discovery manifest and random access token use user-only filesystem permissions. The versioned JSON-line protocol validates the token, session identity, project root, relative paths, annotation fields, and bounded payload sizes. The server accepts one request per connection.
+`/nvim` binds an ephemeral TCP port on `127.0.0.1`. Its discovery manifest and random access token use user-only filesystem permissions. The versioned JSON-line protocol validates the token, session identity, project root, stable submission ID, relative paths, annotation fields, and bounded payload sizes. Typed results describe retry behavior. The server accepts one request per connection, serializes delivery, and keeps a bounded in-memory cache of accepted submission results.
 
 Use `:help pi-nvim` for the Neovim reference.

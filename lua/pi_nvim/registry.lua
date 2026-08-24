@@ -52,7 +52,7 @@ local function decode_manifest(path)
 end
 
 local function valid_manifest(manifest)
-  return manifest.protocolVersion == 1
+  return manifest.protocolVersion == 2
     and type(manifest.sessionId) == "string"
     and manifest.sessionId ~= ""
     and type(manifest.shortId) == "string"

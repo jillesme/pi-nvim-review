@@ -26,6 +26,10 @@ create_command("PiSubmit", function()
   require("pi_nvim").submit()
 end, { desc = "Submit pending comments to the active Pi session" })
 
+create_command("PiComments", function()
+  require("pi_nvim").comments()
+end, { desc = "Open the pending Pi review overview" })
+
 create_command("PiClear", function()
   require("pi_nvim").clear()
 end, { desc = "Clear pending Pi comments" })
@@ -40,6 +44,10 @@ vim.keymap.set("x", "<Plug>(PiAnnotate)", ":<C-U>'<,'>PiAnnotate<CR>", {
 })
 vim.keymap.set("n", "<Plug>(PiSubmit)", "<Cmd>PiSubmit<CR>", {
   desc = "Submit Pi comments",
+  silent = true,
+})
+vim.keymap.set("n", "<Plug>(PiComments)", "<Cmd>PiComments<CR>", {
+  desc = "Open Pi review overview",
   silent = true,
 })
 
