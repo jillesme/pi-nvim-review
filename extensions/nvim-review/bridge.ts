@@ -13,10 +13,13 @@ import {
   type BridgeResponse,
   type DeliveryStatus,
   type ReviewAnnotation,
+  type SubmittedResponse,
+  type SubmitRequest,
 } from "./protocol";
 import { removeManifest, writeManifest } from "./registry";
 
 const CONNECTION_TIMEOUT_MS = 5000;
+const RESULT_CACHE_SIZE = 128;
 const REVIEW_PROMPT_PATH = ".pi/nvim-review-prompt.md";
 const DEFAULT_REVIEW_INSTRUCTIONS = [
   "Process each review comment independently according to its requested outcome.",
@@ -32,6 +35,8 @@ const DEFAULT_REVIEW_INSTRUCTIONS = [
   "In the final response, use separate sections for changes made, questions answered, and comments that need clarification.",
 ].join("\n");
 
+export type BridgeState = "starting" | "running" | "stopping" | "stopped";
+
 export interface ReviewBridgeOptions {
   sessionId: string;
   shortId: string;
@@ -40,6 +45,16 @@ export interface ReviewBridgeOptions {
   token: string;
   onSubmit: (prompt: string, count: number) => Promise<DeliveryStatus> | DeliveryStatus;
   onError?: (error: Error) => void;
+}
+
+interface RequestContext {
+  controller: AbortController;
+  deliveryStarted: boolean;
+}
+
+interface CachedResult {
+  fingerprint: string;
+  response: SubmittedResponse;
 }
 
 function tokensMatch(actual: string, expected: string): boolean {
@@ -54,11 +69,11 @@ function formatLocation(annotation: ReviewAnnotation): string {
     : `${annotation.startLine}-${annotation.endLine}`;
 }
 
-async function readReviewInstructions(projectRoot: string): Promise<string> {
+async function readReviewInstructions(projectRoot: string, signal: AbortSignal): Promise<string> {
   const promptPath = join(projectRoot, REVIEW_PROMPT_PATH);
 
   try {
-    return (await readFile(promptPath, "utf8")).trim();
+    return (await readFile(promptPath, { encoding: "utf8", signal })).trim();
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
       return DEFAULT_REVIEW_INSTRUCTIONS;
@@ -99,22 +114,50 @@ function formatReviewPrompt(
   return lines.join("\n").trimEnd();
 }
 
+function submissionFingerprint(request: SubmitRequest): string {
+  const canonical = request.annotations.map((annotation) => [
+    annotation.path,
+    annotation.startLine,
+    annotation.endLine,
+    annotation.comment,
+    annotation.source,
+  ]);
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
 export class ReviewBridge {
   private readonly options: ReviewBridgeOptions;
   private readonly server: Server;
   private readonly sockets = new Set<Socket>();
-  private active = false;
+  private readonly handlers = new Set<Promise<void>>();
+  private readonly requestContexts = new Set<RequestContext>();
+  private readonly resultCache = new Map<string, CachedResult>();
+  private state: BridgeState = "stopped";
   private manifest?: BridgeManifest;
   private manifestPath?: string;
   private manifestWrites: Promise<void> = Promise.resolve();
+  private activeSubmissionId?: string;
+  private startPromise?: Promise<BridgeManifest>;
+  private stopPromise?: Promise<void>;
 
   constructor(options: ReviewBridgeOptions) {
     this.options = options;
     this.server = createServer((socket) => this.accept(socket));
+    this.server.on("error", (error) => {
+      if (this.state === "running") this.options.onError?.(error);
+    });
   }
 
   isActive(): boolean {
-    return this.active;
+    return this.state === "running";
+  }
+
+  getState(): BridgeState {
+    return this.state;
   }
 
   getManifest(): BridgeManifest | undefined {
@@ -122,59 +165,66 @@ export class ReviewBridge {
   }
 
   async start(): Promise<BridgeManifest> {
-    if (this.active && this.manifest) return this.manifest;
+    if (this.state === "running" && this.manifest) return this.manifest;
+    if (this.state === "starting" && this.startPromise) return this.startPromise;
+    if (this.state === "stopping") throw new Error("Pi Neovim bridge is stopping");
 
-    await new Promise<void>((resolve, reject) => {
-      const onError = (error: Error) => {
-        this.server.off("listening", onListening);
-        reject(error);
+    this.state = "starting";
+    this.stopPromise = undefined;
+    this.startPromise = (async () => {
+      await new Promise<void>((resolve, reject) => {
+        const onError = (error: Error) => {
+          this.server.off("listening", onListening);
+          reject(error);
+        };
+        const onListening = () => {
+          this.server.off("error", onError);
+          resolve();
+        };
+
+        this.server.once("error", onError);
+        this.server.once("listening", onListening);
+        this.server.listen(0, LOOPBACK_HOST);
+      });
+
+      if (this.state !== "starting") throw new Error("Pi Neovim bridge stopped while starting");
+      const address = this.server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Pi Neovim bridge did not receive a TCP port");
+      }
+
+      const manifest: BridgeManifest = {
+        protocolVersion: PROTOCOL_VERSION,
+        sessionId: this.options.sessionId,
+        shortId: this.options.shortId,
+        projectRoot: this.options.projectRoot,
+        pid: process.pid,
+        host: LOOPBACK_HOST,
+        port: address.port,
+        token: this.options.token,
+        startedAt: new Date().toISOString(),
+        ...(this.options.sessionName ? { sessionName: this.options.sessionName } : {}),
       };
-      const onListening = () => {
-        this.server.off("error", onError);
-        resolve();
-      };
-
-      this.server.once("error", onError);
-      this.server.once("listening", onListening);
-      this.server.listen(0, LOOPBACK_HOST);
-    });
-
-    this.server.on("error", (error) => this.options.onError?.(error));
-
-    const address = this.server.address();
-    if (!address || typeof address === "string") {
-      await this.closeServer();
-      throw new Error("Pi Neovim bridge did not receive a TCP port");
-    }
-
-    this.active = true;
-    const manifest: BridgeManifest = {
-      protocolVersion: PROTOCOL_VERSION,
-      sessionId: this.options.sessionId,
-      shortId: this.options.shortId,
-      projectRoot: this.options.projectRoot,
-      pid: process.pid,
-      host: LOOPBACK_HOST,
-      port: address.port,
-      token: this.options.token,
-      startedAt: new Date().toISOString(),
-      ...(this.options.sessionName ? { sessionName: this.options.sessionName } : {}),
-    };
-    this.manifest = manifest;
+      this.manifestPath = await writeManifest(manifest);
+      if (this.state !== "starting") throw new Error("Pi Neovim bridge stopped while starting");
+      this.manifest = manifest;
+      this.state = "running";
+      return manifest;
+    })();
 
     try {
-      this.manifestPath = await writeManifest(manifest);
+      return await this.startPromise;
     } catch (error) {
-      this.active = false;
+      if (this.state !== "stopping") this.state = "stopped";
       await this.closeServer();
       throw error;
+    } finally {
+      this.startPromise = undefined;
     }
-
-    return manifest;
   }
 
   async updateSessionName(sessionName: string | undefined): Promise<void> {
-    if (!this.active || !this.manifest) return;
+    if (this.state !== "running" || !this.manifest) return;
 
     this.manifest = {
       ...this.manifest,
@@ -182,7 +232,7 @@ export class ReviewBridge {
     };
 
     this.manifestWrites = this.manifestWrites.then(async () => {
-      if (!this.active || !this.manifest) return;
+      if (this.state !== "running" || !this.manifest) return;
       this.manifestPath = await writeManifest(this.manifest);
     });
 
@@ -190,19 +240,37 @@ export class ReviewBridge {
   }
 
   async stop(): Promise<void> {
-    if (!this.active && !this.manifestPath) return;
-    this.active = false;
+    if (this.state === "stopped" && !this.manifestPath) return;
+    if (this.state === "stopping" && this.stopPromise) return this.stopPromise;
 
-    await this.manifestWrites.catch(() => undefined);
-    for (const socket of this.sockets) socket.destroy();
-    this.sockets.clear();
-    await this.closeServer();
-    await removeManifest(this.manifestPath, this.options.token);
-    this.manifestPath = undefined;
+    this.state = "stopping";
+    this.stopPromise = (async () => {
+      await this.startPromise?.catch(() => undefined);
+      await this.manifestWrites.catch(() => undefined);
+
+      // Work that has not entered onSubmit is cancelled. Once delivery starts,
+      // shutdown drains it so that bridge state cannot move backwards while Pi
+      // is accepting the review.
+      for (const context of this.requestContexts) {
+        if (!context.deliveryStarted) context.controller.abort();
+      }
+      for (const socket of this.sockets) socket.destroy();
+      this.sockets.clear();
+      await this.closeServer();
+      await Promise.allSettled([...this.handlers]);
+      await removeManifest(this.manifestPath, this.options.token);
+      this.manifestPath = undefined;
+      this.manifest = undefined;
+      this.activeSubmissionId = undefined;
+      this.resultCache.clear();
+      this.state = "stopped";
+    })();
+
+    return this.stopPromise;
   }
 
   private accept(socket: Socket): void {
-    if (!this.active) {
+    if (this.state !== "running") {
       socket.destroy();
       return;
     }
@@ -215,20 +283,21 @@ export class ReviewBridge {
 
     let contents = "";
     let bytes = 0;
-    let handled = false;
+    let requestStarted = false;
+    let responded = false;
 
     const respond = (response: BridgeResponse) => {
-      if (socket.destroyed) return;
-      handled = true;
+      if (responded || socket.destroyed) return;
+      responded = true;
       socket.end(`${JSON.stringify(response)}\n`);
     };
 
     socket.on("data", (chunk: string | Buffer) => {
-      if (handled) return;
+      if (requestStarted || responded) return;
       const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
       bytes += Buffer.byteLength(text);
       if (bytes > MAX_REQUEST_BYTES) {
-        respond(errorResponse("Request is too large"));
+        respond(errorResponse("invalid_request", "Request is too large", false));
         return;
       }
 
@@ -236,39 +305,68 @@ export class ReviewBridge {
       const newline = contents.indexOf("\n");
       if (newline < 0) return;
 
+      requestStarted = true;
       socket.pause();
       const requestLine = contents.slice(0, newline);
       if (contents.slice(newline + 1).trim().length > 0) {
-        respond(errorResponse("Only one request is allowed per connection"));
+        respond(errorResponse("invalid_request", "Only one request is allowed per connection", false));
         return;
       }
 
-      void this.handleRequestLine(requestLine).then(respond);
+      const context: RequestContext = { controller: new AbortController(), deliveryStarted: false };
+      this.requestContexts.add(context);
+      let handler: Promise<void>;
+      handler = this.handleRequestLine(requestLine, context)
+        .then(respond)
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          respond(errorResponse("internal_error", message, true, { sessionId: this.options.sessionId }));
+        })
+        .finally(() => {
+          this.requestContexts.delete(context);
+          this.handlers.delete(handler);
+        });
+      this.handlers.add(handler);
     });
 
     socket.once("end", () => {
-      if (!handled) respond(errorResponse("Request must end with a newline"));
+      if (!requestStarted && !responded) {
+        respond(errorResponse("invalid_request", "Request must end with a newline", false));
+      }
     });
-    socket.once("error", () => {
-      socket.destroy();
-    });
+    socket.once("error", () => socket.destroy());
   }
 
-  private async handleRequestLine(line: string): Promise<BridgeResponse> {
+  private async handleRequestLine(line: string, context: RequestContext): Promise<BridgeResponse> {
     let raw: unknown;
     try {
       raw = JSON.parse(line);
     } catch {
-      return errorResponse("Request is not valid JSON");
+      return errorResponse("invalid_json", "Request is not valid JSON", false);
     }
 
-    const request = parseRequest(raw);
-    if (!request) return errorResponse("Request does not match protocol version 1");
-    if (!tokensMatch(request.token, this.options.token)) return errorResponse("Authentication failed");
-    if (request.sessionId !== this.options.sessionId || request.projectRoot !== this.options.projectRoot) {
-      return errorResponse("Session does not match this bridge");
+    const parsed = parseRequest(raw);
+    if (!parsed.ok) {
+      return errorResponse(parsed.code, parsed.message, false, {
+        sessionId: parsed.sessionId,
+        submissionId: parsed.submissionId,
+      });
     }
-    if (!this.active) return errorResponse("Bridge is shutting down");
+
+    const request = parsed.request;
+    const responseContext = {
+      sessionId: request.sessionId,
+      ...(request.type === "submit" ? { submissionId: request.submissionId } : {}),
+    };
+    if (!tokensMatch(request.token, this.options.token)) {
+      return errorResponse("authentication_failed", "Authentication failed", false, responseContext);
+    }
+    if (request.sessionId !== this.options.sessionId || request.projectRoot !== this.options.projectRoot) {
+      return errorResponse("stale_session", "Session does not match this bridge", false, responseContext);
+    }
+    if (this.state !== "running" || context.controller.signal.aborted) {
+      return errorResponse("bridge_stopping", "Bridge is shutting down", true, responseContext);
+    }
 
     if (request.type === "ping") {
       return {
@@ -279,21 +377,67 @@ export class ReviewBridge {
       };
     }
 
+    const fingerprint = submissionFingerprint(request);
+    const cached = this.resultCache.get(request.submissionId);
+    if (cached) {
+      if (cached.fingerprint !== fingerprint) {
+        return errorResponse(
+          "invalid_request",
+          "Submission ID was already used for different content",
+          false,
+          responseContext,
+        );
+      }
+      return cached.response;
+    }
+
+    if (this.activeSubmissionId) {
+      return errorResponse(
+        "busy",
+        `Submission ${this.activeSubmissionId} is still being delivered`,
+        true,
+        responseContext,
+      );
+    }
+
+    this.activeSubmissionId = request.submissionId;
     try {
-      const instructions = await readReviewInstructions(this.options.projectRoot);
+      const instructions = await readReviewInstructions(this.options.projectRoot, context.controller.signal);
+      if (this.state !== "running" || context.controller.signal.aborted) {
+        return errorResponse("bridge_stopping", "Bridge is shutting down", true, responseContext);
+      }
+
       const prompt = formatReviewPrompt(this.options.projectRoot, request.annotations, instructions);
+      context.deliveryStarted = true;
       const status = await this.options.onSubmit(prompt, request.annotations.length);
-      return {
+      const response: SubmittedResponse = {
         protocolVersion: PROTOCOL_VERSION,
         ok: true,
         type: "submitted",
         sessionId: this.options.sessionId,
+        submissionId: request.submissionId,
         status,
         count: request.annotations.length,
       };
+      this.cacheResult(request.submissionId, fingerprint, response);
+      return response;
     } catch (error) {
+      if (isAbortError(error) || context.controller.signal.aborted || this.state !== "running") {
+        return errorResponse("bridge_stopping", "Bridge is shutting down", true, responseContext);
+      }
       const message = error instanceof Error ? error.message : String(error);
-      return errorResponse(`Pi did not accept the review: ${message}`);
+      return errorResponse("internal_error", `Pi did not accept the review: ${message}`, true, responseContext);
+    } finally {
+      if (this.activeSubmissionId === request.submissionId) this.activeSubmissionId = undefined;
+    }
+  }
+
+  private cacheResult(submissionId: string, fingerprint: string, response: SubmittedResponse): void {
+    this.resultCache.set(submissionId, { fingerprint, response });
+    while (this.resultCache.size > RESULT_CACHE_SIZE) {
+      const oldest = this.resultCache.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.resultCache.delete(oldest);
     }
   }
 

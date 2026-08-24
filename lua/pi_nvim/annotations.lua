@@ -18,45 +18,43 @@ local function comment_summary(comment)
   return summary
 end
 
-function M.count()
-  return #records
+local function valid_buffer(buffer)
+  return buffer and vim.api.nvim_buf_is_valid(buffer)
 end
 
-function M.add(bufnr, absolute_path, relative_path, start_line, end_line, comment)
-  local ok, mark_id = pcall(vim.api.nvim_buf_set_extmark, bufnr, namespace, start_line - 1, 0, {
-    end_row = end_line - 1,
+local function loaded_buffer(buffer)
+  return valid_buffer(buffer) and vim.api.nvim_buf_is_loaded(buffer)
+end
+
+local function set_mark(record)
+  if not loaded_buffer(record.bufnr) then
+    return nil
+  end
+  if record.mark_id then
+    pcall(vim.api.nvim_buf_del_extmark, record.bufnr, namespace, record.mark_id)
+  end
+
+  local ok, mark_id = pcall(vim.api.nvim_buf_set_extmark, record.bufnr, namespace, record.start_line - 1, 0, {
+    end_row = record.end_line - 1,
     end_col = -1,
     strict = false,
     right_gravity = false,
     end_right_gravity = true,
     sign_text = "Pi",
     sign_hl_group = "PiNvimComment",
-    virt_text = { { " Pi: " .. comment_summary(comment), "PiNvimComment" } },
+    virt_text = { { " Pi: " .. comment_summary(record.comment), "PiNvimComment" } },
     virt_text_pos = "eol",
     priority = 150,
   })
   if not ok then
-    return nil, tostring(mark_id)
+    return tostring(mark_id)
   end
-
-  local id = next_id
-  next_id = next_id + 1
-  records[#records + 1] = {
-    id = id,
-    order = id,
-    bufnr = bufnr,
-    mark_id = mark_id,
-    absolute_path = absolute_path,
-    path = relative_path,
-    start_line = start_line,
-    end_line = end_line,
-    comment = comment,
-  }
-  return id
+  record.mark_id = mark_id
+  return nil
 end
 
 local function current_range(record)
-  if vim.api.nvim_buf_is_valid(record.bufnr) and vim.api.nvim_buf_is_loaded(record.bufnr) then
+  if loaded_buffer(record.bufnr) and record.mark_id then
     local ok, mark = pcall(
       vim.api.nvim_buf_get_extmark_by_id,
       record.bufnr,
@@ -74,8 +72,178 @@ local function current_range(record)
   return record.start_line, record.end_line
 end
 
+local function refresh_range(record)
+  record.start_line, record.end_line = current_range(record)
+end
+
+local function find_record(id)
+  for index, record in ipairs(records) do
+    if record.id == id then
+      return record, index
+    end
+  end
+end
+
+function M.count()
+  return #records
+end
+
+function M.add(bufnr, absolute_path, relative_path, start_line, end_line, comment)
+  local id = next_id
+  next_id = next_id + 1
+  local record = {
+    id = id,
+    order = id,
+    bufnr = bufnr,
+    absolute_path = absolute_path,
+    path = relative_path,
+    start_line = start_line,
+    end_line = end_line,
+    comment = comment,
+  }
+  local mark_error = set_mark(record)
+  if mark_error then
+    return nil, mark_error
+  end
+  records[#records + 1] = record
+  return id
+end
+
+function M.attach(bufnr)
+  if not loaded_buffer(bufnr) then
+    return
+  end
+  local name = vim.api.nvim_buf_get_name(bufnr)
+  local absolute_path = vim.uv.fs_realpath(name) or vim.fs.normalize(name)
+  for _, record in ipairs(records) do
+    if record.absolute_path == absolute_path and record.bufnr ~= bufnr then
+      record.bufnr = bufnr
+      record.mark_id = nil
+      set_mark(record)
+    elseif record.absolute_path == absolute_path and not record.mark_id then
+      set_mark(record)
+    end
+  end
+end
+
+function M.restore(project_root, items)
+  M.reset()
+  local maximum_id = 0
+  for _, item in ipairs(items or {}) do
+    local absolute_path = vim.fs.joinpath(project_root, item.path)
+    local bufnr = vim.fn.bufnr(absolute_path)
+    if bufnr < 0 then
+      bufnr = nil
+    end
+    local record = {
+      id = item.id,
+      order = item.order,
+      bufnr = bufnr,
+      absolute_path = absolute_path,
+      path = item.path,
+      start_line = item.startLine,
+      end_line = item.endLine,
+      comment = item.comment,
+    }
+    records[#records + 1] = record
+    maximum_id = math.max(maximum_id, record.id)
+    if loaded_buffer(bufnr) then
+      set_mark(record)
+    end
+  end
+  next_id = maximum_id + 1
+end
+
+function M.list()
+  local result = {}
+  for _, record in ipairs(records) do
+    refresh_range(record)
+    result[#result + 1] = {
+      id = record.id,
+      order = record.order,
+      path = record.path,
+      absolute_path = record.absolute_path,
+      start_line = record.start_line,
+      end_line = record.end_line,
+      comment = record.comment,
+      modified = loaded_buffer(record.bufnr) and vim.bo[record.bufnr].modified or false,
+    }
+  end
+  table.sort(result, function(left, right)
+    return left.order < right.order
+  end)
+  return result
+end
+
+function M.serialize()
+  local result = {}
+  for _, record in ipairs(M.list()) do
+    result[#result + 1] = {
+      id = record.id,
+      order = record.order,
+      path = record.path,
+      startLine = record.start_line,
+      endLine = record.end_line,
+      comment = record.comment,
+    }
+  end
+  return result
+end
+
+function M.get(id)
+  for _, record in ipairs(M.list()) do
+    if record.id == id then
+      return record
+    end
+  end
+end
+
+function M.update(id, comment)
+  local record = find_record(id)
+  if not record then
+    return nil, "Comment no longer exists"
+  end
+  refresh_range(record)
+  record.comment = comment
+  local mark_error = set_mark(record)
+  if mark_error then
+    return nil, mark_error
+  end
+  return true
+end
+
+function M.delete(id)
+  local record, index = find_record(id)
+  if not record then
+    return false
+  end
+  if valid_buffer(record.bufnr) and record.mark_id then
+    pcall(vim.api.nvim_buf_del_extmark, record.bufnr, namespace, record.mark_id)
+  end
+  table.remove(records, index)
+  return true
+end
+
+function M.jump(id)
+  local record = find_record(id)
+  if not record then
+    return nil, "Comment no longer exists"
+  end
+  refresh_range(record)
+  local ok, error_message = pcall(vim.cmd.edit, vim.fn.fnameescape(record.absolute_path))
+  if not ok then
+    return nil, tostring(error_message)
+  end
+  record.bufnr = vim.api.nvim_get_current_buf()
+  if not record.mark_id then
+    set_mark(record)
+  end
+  pcall(vim.api.nvim_win_set_cursor, 0, { record.start_line, 0 })
+  return true
+end
+
 local function source_from_buffer(record, start_line, end_line)
-  if not (vim.api.nvim_buf_is_valid(record.bufnr) and vim.api.nvim_buf_is_loaded(record.bufnr)) then
+  if not loaded_buffer(record.bufnr) then
     return nil
   end
 
@@ -185,7 +353,7 @@ function M.clear(ids)
   local kept = {}
   for _, record in ipairs(records) do
     if not selected or selected[record.id] then
-      if vim.api.nvim_buf_is_valid(record.bufnr) then
+      if valid_buffer(record.bufnr) and record.mark_id then
         pcall(vim.api.nvim_buf_del_extmark, record.bufnr, namespace, record.mark_id)
       end
     else
@@ -193,6 +361,11 @@ function M.clear(ids)
     end
   end
   records = kept
+end
+
+function M.reset()
+  M.clear()
+  next_id = 1
 end
 
 return M

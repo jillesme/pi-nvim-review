@@ -51,10 +51,17 @@ export default function nvimReviewExtension(pi: ExtensionAPI) {
           } else {
             pi.sendUserMessage(prompt);
           }
-          ctx.ui.notify(
-            `${count} Neovim review comment${count === 1 ? "" : "s"} ${queued ? "queued" : "submitted"}`,
-            "info",
-          );
+
+          // Delivery has succeeded at this point. A UI notification failure
+          // must not turn it into a retryable result and cause a duplicate.
+          try {
+            ctx.ui.notify(
+              `${count} Neovim review comment${count === 1 ? "" : "s"} ${queued ? "queued" : "submitted"}`,
+              "info",
+            );
+          } catch {
+            // The bridge acknowledgement is the authoritative result.
+          }
           return queued ? "queued" : "accepted";
         },
         onError: (error) => {

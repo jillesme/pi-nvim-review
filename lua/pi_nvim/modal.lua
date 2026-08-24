@@ -206,6 +206,9 @@ function M.input(options, callback)
   local height = math.max(1, math.min(options.height or 8, available_height() - 4))
   local buffer = create_buffer("pi-nvim://comment")
   vim.bo[buffer].filetype = "markdown"
+  if type(options.initial_text) == "string" and options.initial_text ~= "" then
+    vim.api.nvim_buf_set_lines(buffer, 0, -1, false, vim.split(options.initial_text, "\n", { plain = true }))
+  end
 
   local title = title_text(options.title or "Pi comment", width)
   local window_config = below_line_config(
@@ -241,9 +244,85 @@ function M.input(options, callback)
   vim.schedule(function()
     if valid_window(window) then
       vim.api.nvim_set_current_win(window)
+      local last_line = vim.api.nvim_buf_line_count(buffer)
+      local last_text = vim.api.nvim_buf_get_lines(buffer, last_line - 1, last_line, false)[1] or ""
+      vim.api.nvim_win_set_cursor(window, { last_line, #last_text })
       vim.cmd.startinsert()
     end
   end)
+  return window
+end
+
+function M.review(options, callback)
+  if active then
+    return nil, "another Pi modal is already open"
+  end
+  options = options or {}
+  local width = math.max(1, math.min(options.width or 88, vim.o.columns - 4))
+  local height = math.max(1, math.min(options.height or 24, available_height() - 4))
+  local buffer = create_buffer("pi-nvim://comments")
+  vim.bo[buffer].filetype = "markdown"
+  vim.api.nvim_buf_set_lines(buffer, 0, -1, false, options.lines or { "No pending comments" })
+  vim.bo[buffer].modifiable = false
+
+  local window, open_error = open(
+    buffer,
+    centered_config(
+      width,
+      height,
+      title_text(options.title or "Pi review overview", width),
+      " <Enter> jump · e edit · d delete · p preview · s submit · q close "
+    ),
+    callback
+  )
+  if not window then
+    return nil, open_error
+  end
+
+  vim.wo[window].cursorline = true
+  local function action(name)
+    local line = vim.api.nvim_win_get_cursor(window)[1]
+    local id = options.line_ids and options.line_ids[line] or nil
+    finish({ action = name, id = id })
+  end
+  local map_options = { buffer = buffer, silent = true, nowait = true }
+  vim.keymap.set("n", "<CR>", function() action("jump") end, map_options)
+  vim.keymap.set("n", "e", function() action("edit") end, map_options)
+  vim.keymap.set("n", "d", function() action("delete") end, map_options)
+  vim.keymap.set("n", "p", function() action("preview") end, map_options)
+  vim.keymap.set("n", "s", function() action("submit") end, map_options)
+  vim.keymap.set("n", "q", function() finish({ action = "close" }) end, map_options)
+  vim.keymap.set("n", "<Esc>", function() finish({ action = "close" }) end, map_options)
+  vim.keymap.set("n", "<C-c>", function() finish({ action = "close" }) end, map_options)
+  return window
+end
+
+function M.preview(options, callback)
+  if active then
+    return nil, "another Pi modal is already open"
+  end
+  options = options or {}
+  local width = math.max(1, math.min(options.width or 96, vim.o.columns - 4))
+  local height = math.max(1, math.min(options.height or 28, available_height() - 4))
+  local buffer = create_buffer("pi-nvim://preview")
+  vim.bo[buffer].filetype = "markdown"
+  vim.api.nvim_buf_set_lines(buffer, 0, -1, false, options.lines or {})
+  vim.bo[buffer].modifiable = false
+
+  local window, open_error = open(
+    buffer,
+    centered_config(width, height, title_text(options.title or "Pi submission preview", width), " s submit · q close "),
+    callback
+  )
+  if not window then
+    return nil, open_error
+  end
+
+  local map_options = { buffer = buffer, silent = true, nowait = true }
+  vim.keymap.set("n", "s", function() finish("submit") end, map_options)
+  vim.keymap.set("n", "q", function() finish(nil) end, map_options)
+  vim.keymap.set("n", "<Esc>", function() finish(nil) end, map_options)
+  vim.keymap.set("n", "<C-c>", function() finish(nil) end, map_options)
   return window
 end
 

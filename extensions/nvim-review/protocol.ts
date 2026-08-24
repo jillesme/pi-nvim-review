@@ -1,6 +1,6 @@
 import { posix } from "node:path";
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 export const LOOPBACK_HOST = "127.0.0.1";
 export const MAX_REQUEST_BYTES = 1024 * 1024;
 export const MAX_RESPONSE_BYTES = 64 * 1024;
@@ -10,6 +10,7 @@ export const MAX_COMMENT_CHARS = 16 * 1024;
 export const MAX_SOURCE_CHARS = 64 * 1024;
 export const MAX_SOURCE_LINES = 1000;
 export const MAX_LINE_NUMBER = 10_000_000;
+export const MAX_SUBMISSION_ID_CHARS = 128;
 
 export interface BridgeManifest {
   protocolVersion: typeof PROTOCOL_VERSION;
@@ -45,29 +46,66 @@ export interface PingRequest extends RequestBase {
 
 export interface SubmitRequest extends RequestBase {
   type: "submit";
+  submissionId: string;
   annotations: ReviewAnnotation[];
 }
 
 export type BridgeRequest = PingRequest | SubmitRequest;
-
 export type DeliveryStatus = "accepted" | "queued";
 
-export interface SuccessResponse {
+export interface PongResponse {
   protocolVersion: typeof PROTOCOL_VERSION;
   ok: true;
-  type: "pong" | "submitted";
+  type: "pong";
   sessionId: string;
-  status?: DeliveryStatus;
-  count?: number;
 }
+
+export interface SubmittedResponse {
+  protocolVersion: typeof PROTOCOL_VERSION;
+  ok: true;
+  type: "submitted";
+  sessionId: string;
+  submissionId: string;
+  status: DeliveryStatus;
+  count: number;
+}
+
+export type SuccessResponse = PongResponse | SubmittedResponse;
+
+export type ErrorCode =
+  | "invalid_json"
+  | "incompatible_version"
+  | "invalid_request"
+  | "authentication_failed"
+  | "stale_session"
+  | "bridge_stopping"
+  | "busy"
+  | "timeout"
+  | "transport_error"
+  | "invalid_response"
+  | "internal_error";
 
 export interface ErrorResponse {
   protocolVersion: typeof PROTOCOL_VERSION;
   ok: false;
-  error: string;
+  code: ErrorCode;
+  message: string;
+  retryable: boolean;
+  sessionId?: string;
+  submissionId?: string;
 }
 
 export type BridgeResponse = SuccessResponse | ErrorResponse;
+
+export type RequestParseResult =
+  | { ok: true; request: BridgeRequest }
+  | {
+    ok: false;
+    code: "incompatible_version" | "invalid_request";
+    message: string;
+    sessionId?: string;
+    submissionId?: string;
+  };
 
 const BASE_KEYS = ["protocolVersion", "type", "token", "sessionId", "projectRoot"] as const;
 
@@ -86,6 +124,11 @@ function isNonEmptyString(value: unknown, maxChars: number): value is string {
 
 function isPositiveInteger(value: unknown, maximum: number): value is number {
   return Number.isInteger(value) && (value as number) > 0 && (value as number) <= maximum;
+}
+
+function isSubmissionId(value: unknown): value is string {
+  return isNonEmptyString(value, MAX_SUBMISSION_ID_CHARS)
+    && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value);
 }
 
 function isSafeRelativePath(value: unknown): value is string {
@@ -116,33 +159,74 @@ function validateAnnotation(value: unknown): value is ReviewAnnotation {
   return sourceChars <= MAX_SOURCE_CHARS;
 }
 
-export function parseRequest(value: unknown): BridgeRequest | undefined {
-  if (!isRecord(value)) return undefined;
-  if (value.protocolVersion !== PROTOCOL_VERSION) return undefined;
-  if (!isNonEmptyString(value.token, 256)) return undefined;
-  if (!isNonEmptyString(value.sessionId, 256)) return undefined;
-  if (!isNonEmptyString(value.projectRoot, MAX_PATH_CHARS)) return undefined;
+export function parseRequest(value: unknown): RequestParseResult {
+  if (!isRecord(value)) {
+    return { ok: false, code: "invalid_request", message: "Request must be a JSON object" };
+  }
+
+  const sessionId = typeof value.sessionId === "string" ? value.sessionId.slice(0, 256) : undefined;
+  const submissionId = typeof value.submissionId === "string"
+    ? value.submissionId.slice(0, MAX_SUBMISSION_ID_CHARS)
+    : undefined;
+
+  if (value.protocolVersion !== PROTOCOL_VERSION) {
+    return {
+      ok: false,
+      code: "incompatible_version",
+      message: `Protocol version ${String(value.protocolVersion)} is not supported`,
+      ...(sessionId ? { sessionId } : {}),
+      ...(submissionId ? { submissionId } : {}),
+    };
+  }
+  if (!isNonEmptyString(value.token, 256)) {
+    return { ok: false, code: "invalid_request", message: "Request token is invalid", sessionId, submissionId };
+  }
+  if (!isNonEmptyString(value.sessionId, 256)) {
+    return { ok: false, code: "invalid_request", message: "Request session ID is invalid", submissionId };
+  }
+  if (!isNonEmptyString(value.projectRoot, MAX_PATH_CHARS)) {
+    return { ok: false, code: "invalid_request", message: "Request project root is invalid", sessionId, submissionId };
+  }
 
   if (value.type === "ping") {
-    if (!hasOnlyKeys(value, BASE_KEYS)) return undefined;
-    return value as unknown as PingRequest;
+    if (!hasOnlyKeys(value, BASE_KEYS)) {
+      return { ok: false, code: "invalid_request", message: "Ping request has unknown fields", sessionId };
+    }
+    return { ok: true, request: value as unknown as PingRequest };
   }
 
   if (value.type === "submit") {
-    if (!hasOnlyKeys(value, [...BASE_KEYS, "annotations"])) return undefined;
-    if (!Array.isArray(value.annotations)) return undefined;
-    if (value.annotations.length === 0 || value.annotations.length > MAX_ANNOTATIONS) return undefined;
-    if (!value.annotations.every(validateAnnotation)) return undefined;
-    return value as unknown as SubmitRequest;
+    if (!hasOnlyKeys(value, [...BASE_KEYS, "submissionId", "annotations"])) {
+      return { ok: false, code: "invalid_request", message: "Submit request has unknown fields", sessionId, submissionId };
+    }
+    if (!isSubmissionId(value.submissionId)) {
+      return { ok: false, code: "invalid_request", message: "Submission ID is invalid", sessionId, submissionId };
+    }
+    if (!Array.isArray(value.annotations) || value.annotations.length === 0 || value.annotations.length > MAX_ANNOTATIONS) {
+      return { ok: false, code: "invalid_request", message: "Annotation count is invalid", sessionId, submissionId };
+    }
+    if (!value.annotations.every(validateAnnotation)) {
+      return { ok: false, code: "invalid_request", message: "One or more annotations are invalid", sessionId, submissionId };
+    }
+    return { ok: true, request: value as unknown as SubmitRequest };
   }
 
-  return undefined;
+  return { ok: false, code: "invalid_request", message: "Request type is invalid", sessionId, submissionId };
 }
 
-export function errorResponse(error: string): ErrorResponse {
+export function errorResponse(
+  code: ErrorCode,
+  message: string,
+  retryable: boolean,
+  context: { sessionId?: string; submissionId?: string } = {},
+): ErrorResponse {
   return {
     protocolVersion: PROTOCOL_VERSION,
     ok: false,
-    error: error.slice(0, 512),
+    code,
+    message: message.slice(0, 512),
+    retryable,
+    ...(context.sessionId ? { sessionId: context.sessionId.slice(0, 256) } : {}),
+    ...(context.submissionId ? { submissionId: context.submissionId.slice(0, MAX_SUBMISSION_ID_CHARS) } : {}),
   };
 }
