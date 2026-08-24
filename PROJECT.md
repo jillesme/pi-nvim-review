@@ -197,6 +197,7 @@ This milestone implements the selected product priorities in order.
 
 #### PNR-009 — Safe clear and submit safeguards
 
+- **Status:** done
 - **Type:** Product
 - **Priority:** P0
 - **Depends on:** PNR-008
@@ -350,12 +351,17 @@ This milestone implements the selected product priorities in order.
 
 #### PNR-025 — Durable detached Pi RPC helper
 
+- **Status:** planned
 - **Type:** Product and architecture
 - **Priority:** P2
 - **Depends on:** PNR-001 through PNR-019
 - **Scope:** Evaluate and, if justified, implement a detached helper that survives Pi reload or restart. Define secure endpoint ownership, leases, token rotation, durable submission IDs and results, and a clear helper-to-Pi acknowledgement contract.
 - **Reason:** The live Pi process and repeated `/nvim` requirement are important product restrictions, but removing them before delivery semantics are sound would increase risk.
 - **Acceptance:** Restart and reload do not lose accepted results or create duplicate delivery. The helper does not persist reusable session tokens.
+- **Investigation outcome:** A helper is justified as a durable inbox and delivery coordinator, not as a detached `pi --mode rpc` owner. An RPC child would create a separate headless Pi session, and its successful `prompt` response confirms preflight acceptance rather than durable message persistence.
+- **Recommended contract:** The helper atomically stores the submission ID, payload fingerprint, exact formatted prompt, target session ID, and delivery state before acknowledgement. A session-scoped Pi extension lease then pulls deliveries. It acknowledges one only after a user message containing the stable submission marker is visible in the Pi session journal. On reconnect, the extension scans that journal before redelivery, which closes the crash window between Pi persistence and helper acknowledgement.
+- **Security and lifecycle:** Use one user-owned endpoint, short renewable leases, a new random token for each lease, token digests rather than reusable tokens in durable state, restrictive files, atomic state transitions, and idle helper shutdown. A disconnected but unexpired lease can accept durable work with an explicit `stored` result; an expired lease rejects new work.
+- **Implementation gate:** Complete PNR-011 through PNR-019 first. Before full implementation, prove the helper contract with a small crash-recovery spike covering failure before helper persistence, after helper persistence, after Pi message persistence, and after helper delivery acknowledgement.
 
 ## Initial implementation sequence
 

@@ -311,7 +311,12 @@ function M.preview(options, callback)
 
   local window, open_error = open(
     buffer,
-    centered_config(width, height, title_text(options.title or "Pi submission preview", width), " s submit · q close "),
+    centered_config(
+      width,
+      height,
+      title_text(options.title or "Pi submission preview", width),
+      options.footer or " s submit · q close "
+    ),
     callback
   )
   if not window then

@@ -24,7 +24,7 @@
     {
       "file": "lua/pi_nvim/annotations.lua",
       "pattern": "^function M.add\\(bufnr, absolute_path, relative_path, start_line, end_line, comment\\)$",
-      "description": "### Pending annotations have editor-owned identity\n\nEach pending record gets a stable local `id`/`order` plus an extmark, buffer, absolute file path, project-relative wire path, range, and comment. Extmarks follow edits. Serialization keeps stable IDs and current ranges, while the wire builder omits editor-only fields."
+      "description": "### Pending annotations have editor-owned identity\n\nEach pending record gets a stable local `id`/`order` plus an extmark, buffer, absolute file path, project-relative wire path, range, comment, and original-source fingerprint. Extmarks follow edits. Serialization keeps stable IDs, current ranges, and the fingerprint for changed-context warnings, while the wire builder omits editor-only fields."
     },
     {
       "file": "lua/pi_nvim/draft.lua",

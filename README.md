@@ -66,8 +66,8 @@ pi -e /absolute/path/to/pi-nvim-review/extensions/nvim-review/index.ts
 | `:Pi` | Connect to a live session for Neovim's canonical current working directory. A sole session is selected automatically. |
 | `:[range]PiAnnotate` | Add a comment to the current line or supplied line range. |
 | `:PiComments` | Open the pending review overview to jump, edit, delete, preview, or submit. |
-| `:PiSubmit` | Submit all pending comments to the active session. |
-| `:PiClear` | Remove all pending comments and cancel any retry snapshot. |
+| `:PiSubmit` | Submit all pending comments. Risky snapshots open an exact preview before delivery. |
+| `:PiClear` | Confirm, then remove all pending comments and cancel any retry snapshot. |
 
 Neovim requires user commands to start with an uppercase letter. This is why the commands use `:Pi` and `:PiSubmit`, not lowercase or hyphenated names.
 
@@ -88,7 +88,7 @@ Neovim requires user commands to start with an uppercase letter. This is why the
    - normal mode `<leader>pa` opens a multiline comment modal for the current line;
    - visual mode `<leader>pa` opens it for the selected line range;
    - press `<C-s>` to save the comment or `<Esc>` to cancel it.
-6. Run `<leader>ps` or `:PiSubmit`.
+6. Run `<leader>ps` or `:PiSubmit`. If an excerpt comes from a modified buffer, its source changed after annotation, or its original context is unavailable, inspect the exact immutable snapshot and press `s` to send it.
 
 Pi receives one user message with sorted project-relative paths, current line ranges, source excerpts, and comments. If Pi is idle, processing starts immediately. If Pi is busy, the review is queued as a follow-up and does not interrupt the current task.
 
@@ -124,7 +124,9 @@ If the file exists but cannot be read, submission fails and Neovim keeps the pen
 
 `:Pi` opens a centered session picker only when several matching sessions exist. Use `j`/`k` or `<C-n>`/`<C-p>` to move, `<Enter>` to select, and `<Esc>` or `q` to cancel.
 
-`:PiComments` opens the review overview. Use `<Enter>` to jump to a comment, `e` to edit, `d` to delete, `p` to preview, `s` to submit, and `q` to close. A comment in a stable retry snapshot cannot be edited or deleted until it is acknowledged or cancelled with `:PiClear`.
+`:PiComments` opens the review overview. Use `<Enter>` to jump to a comment, `e` to edit, `d` to delete, `p` to create an exact submission preview, `s` to submit, and `q` to close. The preview shows the authenticated target, immutable submission ID, exact excerpts, and source-risk warnings. Press `s` to send it. Closing an unattempted preview cancels only its snapshot and keeps the editable comments. A snapshot that may have reached Pi stays immutable for duplicate-safe retry.
+
+`:PiClear` asks for explicit confirmation. The confirmation becomes invalid if the project, comments, request state, or retry snapshot changes while the prompt is open.
 
 `:PiAnnotate` opens a bordered multiline editor below the selected or current line when there is enough room. It uses a centered file-window fallback near the bottom of the screen. Press `<C-s>` in normal or insert mode to add the comment. Press `<Esc>`, `<C-c>`, or normal-mode `q` to cancel it.
 
@@ -192,7 +194,7 @@ By default, both plugins use a user-specific directory below the operating syste
 - **The project root must match.** `:Pi` compares Pi's canonical startup directory with Neovim's canonical `getcwd()`. Use `:cd` to enter the Pi project root before `:Pi`.
 - **Restored drafts require fresh authentication.** Drafts contain target metadata but no bridge token. Use `:Pi` before submission. Rebinding a pending review to another authenticated same-project session is explicit and cancels any old retry identity while keeping the comments.
 - **Only existing project files are accepted.** Unnamed buffers, special buffers, missing files, and files that resolve outside the selected project root cannot be annotated.
-- Source excerpts can contain unsaved Neovim buffer text. Save related edits before Pi changes the same files to avoid normal editor/disk conflicts.
+- Source excerpts can contain unsaved Neovim buffer text. The plugin warns before sending modified-buffer excerpts, source context that changed after annotation, or restored comments without a source baseline. Save related edits before Pi changes the same files to avoid normal editor/disk conflicts.
 
 ## Failure behavior
 
